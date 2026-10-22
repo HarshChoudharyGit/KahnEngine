@@ -35,6 +35,7 @@ import {
   recordDemoExecutionStep,
   saveExecutionHistory,
 } from '../data/executionData.js'
+import { createWorkflowFromTemplate } from '../data/workflowTemplates.js'
 import ExecutionHistory from './ExecutionHistory.jsx'
 import NodePicker from './NodePicker.jsx'
 import NodeConfigSidebar from './NodeConfigSidebar.jsx'
@@ -114,9 +115,12 @@ function WorkflowNode({ id, data, selected }) {
 
 const nodeTypes = { workflow: WorkflowNode }
 
-function WorkflowEditor({ activeTab }) {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges)
+function WorkflowEditor({ activeTab, selectedTemplate }) {
+  const [templateWorkflow] = useState(() =>
+    selectedTemplate ? createWorkflowFromTemplate(selectedTemplate.id) : null,
+  )
+  const [nodes, setNodes, onNodesChange] = useNodesState(templateWorkflow?.nodes ?? initialNodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState(templateWorkflow?.edges ?? initialEdges)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState(null)
   const [selectedNodeId, setSelectedNodeId] = useState(null)
@@ -136,7 +140,7 @@ function WorkflowEditor({ activeTab }) {
   const [executions, setExecutions] = useState(initialHistory.executions)
   const [selectedExecutionId, setSelectedExecutionId] = useState(initialHistory.executions[0]?.id ?? null)
   const [storageError, setStorageError] = useState(initialHistory.error)
-  const nextNodeId = useRef(8)
+  const nextNodeId = useRef(templateWorkflow ? templateWorkflow.nodes.length + 1 : 8)
   const activeExecutionRef = useRef(null)
   const persistHistoryRef = useRef(false)
   const { screenToFlowPosition, fitView } = useReactFlow()
@@ -504,10 +508,10 @@ function WorkflowEditor({ activeTab }) {
   )
 }
 
-function WorkflowCanvas({ activeTab }) {
+function WorkflowCanvas({ activeTab, selectedTemplate }) {
   return (
-    <ReactFlowProvider>
-      <WorkflowEditor activeTab={activeTab} />
+    <ReactFlowProvider key={selectedTemplate?.revision ?? 'initial'}>
+      <WorkflowEditor activeTab={activeTab} selectedTemplate={selectedTemplate} />
     </ReactFlowProvider>
   )
 }

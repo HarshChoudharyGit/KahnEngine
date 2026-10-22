@@ -13,13 +13,22 @@ function LandingRoute() {
 
 function Workspace() {
   const [activeTab, setActiveTab] = useState('editor')
+  const [selectedTemplate, setSelectedTemplate] = useState(null)
+  const navigate = useNavigate()
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#100d0a]">
-      <SideBar />
+      <SideBar
+        onGoHome={() => navigate('/')}
+        onGoEditor={() => setActiveTab('editor')}
+        onLoadTemplate={(templateId) => setSelectedTemplate((current) => ({
+          id: templateId,
+          revision: (current?.revision ?? 0) + 1,
+        }))}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
         <Header activeTab={activeTab} onTabChange={setActiveTab} />
-        <WorkflowCanvas activeTab={activeTab} />
+        <WorkflowCanvas activeTab={activeTab} selectedTemplate={selectedTemplate} />
       </div>
     </div>
   )
