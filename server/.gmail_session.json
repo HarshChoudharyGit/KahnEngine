@@ -1,0 +1,16 @@
+{
+  "tokens": {
+    "access_token": "ya29.a0AX07Cmv9IYH2sfmjmqjpw_7-wnutIfwj8TlcpKgDfb0herAxzBxqOcUOD5d6gkmxjrbWMQ48hTzDfPq-zRynOwFcTIICwhhcBPRg2bImQDadg8vPVIqE5tgzXWkzLEni49_ardGc5hwDuTO1wGgWb9t8UKhmG7xY2eJ4TbZe-2TdEZ-li7tTqqjHZtkPfziS4kShTFsaCgYKAcsSARcSFQHGX2MitqLI3uB7UMgFaBfm8lEZnQ0206",
+    "refresh_token": "1//0gEADqvgWo4nKCgYIARAAGBASNwF-L9IrcSiWVapfTROD7NiFNKw7o_fp68040WpScFF-my820JN91hOqbVH4RsI-f3zNjzlD_jI",
+    "scope": "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/gmail.readonly openid",
+    "token_type": "Bearer",
+    "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6Ijk0M2EzYTVkN2Q5MTk2MjVhNDU0ZTQ4OWI3NWMyOWFkYWI1N2FjYmEiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL2FjY291bnRzLmdvb2dsZS5jb20iLCJhenAiOiIxMDczNDI2NzcxMTcyLWo1ZnVhMHFwa2MxcGo5bnJwcm1iYmY2ajNvbjliNTk3LmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29tIiwiYXVkIjoiMTA3MzQyNjc3MTE3Mi1qNWZ1YTBxcGtjMXBqOW5ycHJtYmJmNmozb245YjU5Ny5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbSIsInN1YiI6IjExMDE2ODAwNzkxOTYwMzYyMzU0NCIsImVtYWlsIjoiaGFyc2htbm5pdDIwMDZAZ21haWwuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsImF0X2hhc2giOiI1WV80MWVKWGZtd0ZkLVpTSEF4Sy13IiwibmFtZSI6IkhhcnNoIENob3VkaGFyeSIsInBpY3R1cmUiOiJodHRwczovL2xoMy5nb29nbGV1c2VyY29udGVudC5jb20vYS9BQ2c4b2NJdGJycE82czFIdzZwT0hTOW1lbW1YWmpBMkZnN2xoNEo3d29BbE01UzR3ZkJqYVE9czk2LWMiLCJnaXZlbl9uYW1lIjoiSGFyc2giLCJmYW1pbHlfbmFtZSI6IkNob3VkaGFyeSIsImlhdCI6MTc5Mjc2NjgwMywiZXhwIjoxNzkyNzcwNDAzfQ.aOrVc5sHepm2EeMNdwMFUwPd5PSNd50HWcuLGAWaaErdyUHYS0aLXrYcQb_fQeMN-z2k4c0ptl6ga0ugkY6-w_u3W7WwjVqJWMTqy2foHlNapoxF-p3BmIyomJBVfqezCBc5ishv8H2-brU8smGcVZYre7v-gBYc09WJG1NjMHj_rCEWxOEezhL_TcEzc475qbFBFvhB6lJTjwgbLNKwL5XKpviRNdVIRjssbIEYPZq3nmpZpZWaL0_B1QX__iWrbNXVoM5M30A6G8irwIOzl1DgHo0Plm4kut-vS1cdguDZ1j5L7vSV_0SRrJxHlEakJN_lZX2gA8gvsqp3iajp6Q",
+    "refresh_token_expires_in": 604799,
+    "expiry_date": 1792770394715
+  },
+  "user": {
+    "email": "harshmnnit2006@gmail.com",
+    "name": "Harsh Choudhary",
+    "picture": "https://lh3.googleusercontent.com/a/ACg8ocItbrpO6s1Hw6pOHS9memmXZjA2Fg7lh4J7woAlM5S4wfBjaQ=s96-c"
+  }
+}
