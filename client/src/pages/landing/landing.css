@@ -1,0 +1,50 @@
+.landing-page {
+  --ink: #100d0a;
+  --panel: #17120e;
+  --gold: #d4ad58;
+  --gold-bright: #f0d58e;
+  --muted: #a9997b;
+  overflow: hidden;
+  background: var(--ink);
+  color: #e5d8b8;
+  font-family: "DM Sans", sans-serif;
+}
+
+.landing-display {
+  font-family: "DM Sans", sans-serif;
+}
+
+.landing-hero-title {
+  font-family: "Cinzel", Georgia, serif;
+}
+
+.landing-noise {
+  background-image: radial-gradient(rgba(212, 173, 88, 0.22) 0.65px, transparent 0.65px);
+  background-size: 23px 23px;
+  mask-image: linear-gradient(to bottom, black, transparent 78%);
+}
+
+.landing-nav.is-scrolled {
+  border-color: rgba(142, 113, 57, 0.35);
+  background: rgba(16, 13, 10, 0.88);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(18px);
+}
+
+.landing-wheel {
+  filter: drop-shadow(0 0 20px rgba(222, 141, 51, 0.16));
+}
+
+.landing-cta {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.landing-cta::before {
+  position: absolute;
+  z-index: -1;
+  inset: -2px;
+  background: linear-gradient(110deg, #9f6d2b, #f0d58e, #c76c4d, #d4ad58);
+  content: "";
+}
