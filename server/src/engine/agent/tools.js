@@ -51,44 +51,108 @@ export const webSearchTool = tool(
 );
 
 /**
- * Code Interpreter / Sandbox Tool
- * Executes JavaScript code safely to calculate values, format data, or evaluate logic.
+ * Helper to validate URLs and prevent Server-Side Request Forgery (SSRF)
  */
-export const codeInterpreterTool = tool(
-  async ({ code }) => {
+export function isSafeUrl(urlString) {
+  try {
+    const parsed = new URL(urlString);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname === '169.254.169.254' ||
+      hostname === '[::1]' ||
+      hostname.endsWith('.local') ||
+      hostname.endsWith('.internal')
+    ) {
+      return false;
+    }
+    const ipMatch = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+    if (ipMatch) {
+      const first = Number(ipMatch[1]);
+      const second = Number(ipMatch[2]);
+      if (first === 10) return false;
+      if (first === 127) return false;
+      if (first === 169 && second === 254) return false;
+      if (first === 172 && second >= 16 && second <= 31) return false;
+      if (first === 192 && second === 168) return false;
+      if (first === 0) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Safe Math Calculator Tool
+ * Evaluates arithmetic expressions safely without arbitrary code execution.
+ */
+export function evaluateSafeMath(expression) {
+  const sanitized = String(expression || '').trim();
+  if (!sanitized) throw new Error('Math expression is required.');
+
+  // Validate: Only numbers, math operators (+ - * / % ** ()), spaces, commas, and Math.<func>
+  const tokenCheck = sanitized.replace(/Math\.(abs|round|floor|ceil|min|max|sqrt|pow|PI|E)/g, '');
+  if (!/^[0-9+\-*/%().\s,]+$/.test(tokenCheck)) {
+    throw new Error('Unsafe or invalid characters in math expression. Only standard arithmetic and safe Math functions are permitted.');
+  }
+
+  const compute = new Function(`"use strict"; return (${sanitized});`);
+  const res = compute();
+  if (typeof res !== 'number' || !Number.isFinite(res)) {
+    throw new Error('Expression did not produce a valid finite number.');
+  }
+  return res;
+}
+
+export const calculatorTool = tool(
+  async ({ expression }) => {
     try {
-      // Evaluate calculation/expression safely
-      const fn = new Function('return (' + code + ')');
-      const result = fn();
+      const result = evaluateSafeMath(expression);
       return JSON.stringify({
         status: 'success',
-        code,
-        output: result !== undefined ? result : 'Execution completed (undefined)',
+        expression,
+        result,
       });
     } catch (err) {
       return JSON.stringify({
         status: 'error',
-        code,
+        expression,
         error: err.message,
       });
     }
   },
   {
-    name: 'code_interpreter',
-    description: 'Executes JavaScript expressions to perform exact math, data parsing, regex, or logic transformations.',
+    name: 'calculator',
+    description: 'Safely evaluates mathematical and arithmetic expressions without arbitrary code execution.',
     schema: z.object({
-      code: z.string().describe('The JavaScript code or math expression to execute, e.g. "Math.round(250 * 1.18)" or "JSON.stringify({ active: true })"'),
+      expression: z.string().describe('The arithmetic expression to calculate, e.g. "Math.round(250 * 1.18)" or "(1200 + 450) / 4"'),
     }),
   }
 );
 
+// Backward-compatible alias for existing configurations
+export const codeInterpreterTool = calculatorTool;
+
 /**
  * Dynamic HTTP / REST API Tool
- * Allows the agent to query or mutate external HTTP services dynamically.
+ * Allows the agent to query external HTTP services dynamically with SSRF protection.
  */
 export const httpRequestTool = tool(
   async ({ url, method = 'GET', body }) => {
     try {
+      if (!isSafeUrl(url)) {
+        return JSON.stringify({
+          error: `HTTP request blocked: Access to private/internal network addresses or unsafe protocols is restricted.`,
+          url,
+        });
+      }
+
       const options = {
         method: method.toUpperCase(),
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -108,7 +172,7 @@ export const httpRequestTool = tool(
       try {
         parsed = JSON.parse(text);
       } catch {
-        parsed = text.slice(0, 500);
+        parsed = text.slice(0, 1000);
       }
 
       return JSON.stringify({
@@ -124,7 +188,7 @@ export const httpRequestTool = tool(
   },
   {
     name: 'http_request',
-    description: 'Dispatches an HTTP GET or POST request to any REST API endpoint and returns the JSON payload.',
+    description: 'Dispatches an HTTP GET or POST request to any external REST API endpoint and returns the JSON payload.',
     schema: z.object({
       url: z.string().url().describe('The full HTTP or HTTPS URL to call'),
       method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).default('GET').describe('HTTP method to use'),
@@ -209,16 +273,16 @@ export const githubTool = tool(
 
 export const toolRegistry = {
   web_search: webSearchTool,
-  code_interpreter: codeInterpreterTool,
+  calculator: calculatorTool,
+  code_interpreter: calculatorTool,
   http_request: httpRequestTool,
   send_alert: notificationTool,
   github_action: githubTool,
 };
 
 export function getToolsForAgent(enabledToolNames = []) {
-  if (!enabledToolNames || enabledToolNames.length === 0) {
-    // Default to search + code interpreter + http
-    return [webSearchTool, codeInterpreterTool, httpRequestTool];
+  if (!Array.isArray(enabledToolNames) || enabledToolNames.length === 0) {
+    return [];
   }
 
   const selected = [];
@@ -227,5 +291,6 @@ export function getToolsForAgent(enabledToolNames = []) {
       selected.push(toolRegistry[name]);
     }
   }
-  return selected.length > 0 ? selected : [webSearchTool, codeInterpreterTool, httpRequestTool];
+  return selected;
 }
+

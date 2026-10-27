@@ -4,6 +4,7 @@ import {
   redactSensitive,
   executeWorkflow,
 } from './src/engine/executor.js';
+import { setMockAIProvider, clearMockAIProvider } from './src/engine/agent/langgraphAgent.js';
 import {
   saveWorkflowAndCreateExecution,
   getExecution,
@@ -128,6 +129,10 @@ async function runTests() {
     // 3. END-TO-END WORKFLOW EXECUTION: Trigger -> AI Agent -> Gmail
     // ----------------------------------------------------------------
     console.log('\n3. Testing Complete End-to-End Workflow (Trigger -> AI Agent -> Gmail):');
+
+    setMockAIProvider(async ({ prompt }) => {
+      return `AI Generated Executive Summary: Operational metrics nominal for prompt "${prompt.slice(0, 30)}..."`;
+    });
 
     // Workflow Test Case A: Dynamic mapping configured in Gmail node
     const workflowA = {

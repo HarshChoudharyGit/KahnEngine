@@ -185,7 +185,19 @@ export function validateNodeConfigurations(nodes = []) {
       case 'ai-agent': {
         required('systemInstructions', 'System instructions');
         required('prompt', 'Agent prompt');
-        if (config.model && !['gpt-4o-mini', 'gpt-4o', 'claude-3-5-sonnet'].includes(config.model)) {
+        const supportedAiModels = [
+          'gemini-3.5-flash',
+          'gemini-3.5-flash-lite',
+          'gemini-3.8-flash',
+          'gemini-2.0-flash',
+          'gemini-1.5-flash',
+          'gemini-1.5-pro',
+          'gpt-4o-mini',
+          'gpt-4o',
+          'gpt-3.5-turbo',
+          'claude-3-5-sonnet',
+        ];
+        if (config.model && !supportedAiModels.includes(config.model)) {
           errors.push('Choose a supported AI model.');
         }
         if (config.temperature !== undefined &&

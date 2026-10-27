@@ -223,7 +223,8 @@ export function redactSensitive(text) {
  */
 export function resolveVariablePath(pathStr, context) {
   if (!pathStr || typeof pathStr !== 'string' || !context) return undefined;
-  const parts = pathStr.trim().split('.');
+  const normalizedPath = pathStr.trim().replace(/\[(\d+)\]/g, '.$1');
+  const parts = normalizedPath.split('.');
   const root = parts[0];
 
   const clean = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -292,7 +293,13 @@ export function resolveVariablePath(pathStr, context) {
       }
       return undefined;
     }
-    current = current[p];
+    if (current[p] !== undefined) {
+      current = current[p];
+    } else if (current.output && typeof current.output === 'object' && current.output[p] !== undefined) {
+      current = current.output[p];
+    } else {
+      current = undefined;
+    }
   }
 
   return current;
@@ -344,6 +351,7 @@ export function resolveExpressions(obj, context, isCodeField = false) {
  * Handler for individual node types
  */
 async function executeSingleNode(node, context, log) {
+  const nodeLabel = node.data?.title || node.data?.label || node.id;
   const nodeType = (node.data?.configType || node.data?.type || node.type || '').toLowerCase();
   const rawConfig = node.data?.configuration || node.data || {};
   const config = resolveExpressions(rawConfig, context);
@@ -833,9 +841,10 @@ async function executeSingleNode(node, context, log) {
 
     case 'aiagent':
     case 'ai-agent': {
-      log(`Activating LangGraph Agent with autonomous Tool Calling...`);
+      log(`Activating AI Agent node: "${nodeLabel}"...`);
       return await executeLangGraphAgent({
         node,
+        config,
         context,
         log,
         executionId: context.executionId,
