@@ -93,11 +93,12 @@ const gmailActionConfig = {
       errors.operation = 'Select an operation.';
     }
 
+    const toVal = String(form.to || '').trim();
     if (
       form.operation === 'send_email' &&
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.to || '')
+      (!toVal || (!toVal.includes('{{') && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toVal)))
     ) {
-      errors.to = 'Enter a valid recipient email.';
+      errors.to = 'Enter a valid recipient email or expression like {{outputs.<nodeId>.data.email}}.';
     }
 
     if (

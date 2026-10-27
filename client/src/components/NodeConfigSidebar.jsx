@@ -4,8 +4,9 @@ import { AlertCircle, Check, Trash2, X } from 'lucide-react'
 import { getNodeConfigSchema } from '../nodes/nodeConfigRegistry.js'
 import NodeConfigForm from './NodeConfigForm.jsx'
 
-function NodeConfigPanel({ node, onClose, onDelete, onSave, onInvalidSave }) {
-  const schema = getNodeConfigSchema(node.data.configType)
+function NodeConfigPanel({ node, nodes, edges, onClose, onDelete, onSave, onInvalidSave }) {
+  const configType = node.data?.configType || node.data?.type || node.type || node.data?.title
+  const schema = getNodeConfigSchema(configType)
   const ConfigForm = schema.Form ?? NodeConfigForm
   const [draft, setDraft] = useState(() => ({
     ...schema.fields.reduce((defaults, field) => {
@@ -37,7 +38,13 @@ function NodeConfigPanel({ node, onClose, onDelete, onSave, onInvalidSave }) {
 
   const handleSave = (event) => {
     event.preventDefault()
-    const validationErrors = schema.validate(draft)
+    let validationErrors = {}
+    try {
+      validationErrors = typeof schema.validate === 'function' ? schema.validate(draft) : {}
+    } catch (err) {
+      console.warn('Form validation error:', err)
+      validationErrors = { form: 'Configuration needs review.' }
+    }
     setErrors(validationErrors)
     if (Object.keys(validationErrors).length > 0) {
       onInvalidSave(node.id)
@@ -94,6 +101,9 @@ function NodeConfigPanel({ node, onClose, onDelete, onSave, onInvalidSave }) {
           )}
           <ConfigForm
             schema={schema}
+            node={node}
+            nodes={nodes}
+            edges={edges}
             value={draft}
             errors={errors}
             onChange={(nextValue) => {

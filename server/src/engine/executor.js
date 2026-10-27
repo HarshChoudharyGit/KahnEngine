@@ -37,19 +37,24 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
       completedAt: new Date().toISOString(),
       durationMs: Date.now() - executionStartMs,
     });
+
     memoryStore.broadcastTelemetry(executionId, 'execution_failed', {
       executionId,
       error: errorMsg,
       cycleNodes: kahnResult.cycleNodes,
     });
+
+
     return;
   }
 
   // Mark execution as RUNNING
   // Node context storage (passing outputs between nodes)
   const context = {
+    executionId,
     trigger: triggerPayload,
     outputs: {},
+    nodes: {},
   };
 
   await startExecution(executionId, nodes);
@@ -67,6 +72,11 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
     const nodeType = (node.data?.configType || node.data?.type || node.type || 'default').toLowerCase();
     const nodeStartMs = Date.now();
 
+    const incomingEdges = (edges || []).filter((e) => e.target === nodeId);
+    const predecessorNodeIds = incomingEdges.map((e) => e.source);
+    node._incomingEdges = incomingEdges;
+    node._predecessorIds = predecessorNodeIds;
+
     await startNodeExecution(executionId, {
       nodeId,
       nodeType,
@@ -74,6 +84,7 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
         nodeTitle: nodeLabel,
         trigger: context.trigger,
         outputs: context.outputs,
+        nodes: context.nodes,
       },
     });
 
@@ -109,6 +120,13 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
       }
       const durationMs = Date.now() - nodeStartMs;
       context.outputs[nodeId] = result;
+      context.nodes[nodeId] = {
+        id: nodeId,
+        type: nodeType,
+        title: nodeLabel,
+        configType: node.data?.configType || nodeType,
+        output: result,
+      };
 
       // Broadcast node SUCCESS
       await finishNodeExecution(executionId, {
@@ -185,11 +203,150 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
 }
 
 /**
+ * Redacts sensitive tokens, passwords, and API keys from string values before logging.
+ */
+export function redactSensitive(text) {
+  if (typeof text !== 'string') {
+    if (text === null || text === undefined) return '';
+    text = typeof text === 'object' ? JSON.stringify(text) : String(text);
+  }
+  return text
+    .replace(/\bBearer\s+[A-Za-z\d._~+/-]+=*/gi, 'Bearer [REDACTED]')
+    .replace(/\b(access_token|refresh_token|client_secret|password|api[_-]?key|secret)\s*[:=]\s*[^&\s,;]+/gi, '$1=[REDACTED]')
+    .replace(/ghp_[A-Za-z0-9_]{20,}/g, 'ghp_[REDACTED]')
+    .replace(/sk-[A-Za-z0-9_-]{20,}/g, 'sk-[REDACTED]');
+}
+
+/**
+ * Resolves a variable path such as "nodes.aiAgent1.output.text", "outputs.node-1.status",
+ * or "trigger.body" against the execution context.
+ */
+export function resolveVariablePath(pathStr, context) {
+  if (!pathStr || typeof pathStr !== 'string' || !context) return undefined;
+  const parts = pathStr.trim().split('.');
+  const root = parts[0];
+
+  const clean = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  const findNode = (targetKey) => {
+    if (!targetKey) return undefined;
+    if (context.nodes && context.nodes[targetKey] !== undefined) {
+      return context.nodes[targetKey];
+    }
+    if (context.outputs && context.outputs[targetKey] !== undefined) {
+      const out = context.outputs[targetKey];
+      return { output: out, ...(typeof out === 'object' && out !== null ? out : {}) };
+    }
+    const targetClean = clean(targetKey);
+    if (context.nodes) {
+      for (const [nId, nData] of Object.entries(context.nodes)) {
+        if (
+          clean(nId) === targetClean ||
+          clean(nData.title) === targetClean ||
+          clean(nData.type) === targetClean ||
+          clean(nData.configType) === targetClean
+        ) {
+          return nData;
+        }
+      }
+    }
+    if (context.outputs) {
+      for (const [nId, out] of Object.entries(context.outputs)) {
+        if (clean(nId) === targetClean) {
+          return { output: out, ...(typeof out === 'object' && out !== null ? out : {}) };
+        }
+      }
+    }
+    return undefined;
+  };
+
+  let current;
+  let remainingParts = parts.slice(1);
+
+  if (root === 'trigger') {
+    current = context.trigger;
+  } else if (root === 'outputs') {
+    const targetKey = parts[1];
+    remainingParts = parts.slice(2);
+    const nodeObj = findNode(targetKey);
+    current = nodeObj ? (nodeObj.output !== undefined ? nodeObj.output : nodeObj) : undefined;
+  } else if (root === 'nodes') {
+    const targetKey = parts[1];
+    remainingParts = parts.slice(2);
+    current = findNode(targetKey);
+  } else {
+    const nodeObj = findNode(root);
+    if (nodeObj !== undefined) {
+      current = nodeObj;
+    } else {
+      current = context[root];
+    }
+  }
+
+  for (let i = 0; i < remainingParts.length; i++) {
+    const p = remainingParts[i];
+    if (current === undefined || current === null) return undefined;
+    if (typeof current === 'string') {
+      if (['text', 'output', 'completion', 'response', 'value', 'data'].includes(p)) {
+        continue;
+      }
+      return undefined;
+    }
+    current = current[p];
+  }
+
+  return current;
+}
+
+/**
+ * Recursively resolves {{trigger.*}}, {{nodes.nodeId.output.*}}, and {{outputs.nodeId.*}} expressions
+ */
+export function resolveExpressions(obj, context, isCodeField = false) {
+  if (isCodeField) return obj;
+  if (typeof obj === 'string') {
+    const trimmed = obj.trim();
+    // Direct value replacement if the entire string is {{expression}}
+    const exactMatch = trimmed.match(/^\{\{([\w.[\]-]+)\}\}$/);
+    if (exactMatch) {
+      const val = resolveVariablePath(exactMatch[1], context);
+      if (val !== undefined) return val;
+    }
+
+    // Inline substring interpolation
+    return obj.replace(/\{\{([\w.[\]-]+)\}\}/g, (match, pathStr) => {
+      const val = resolveVariablePath(pathStr, context);
+      if (val === undefined || val === null) return match;
+      if (typeof val === 'object' && val !== null) {
+        if (typeof val.text === 'string') return val.text;
+        if (typeof val.data === 'string') return val.data;
+        return JSON.stringify(val, null, 2);
+      }
+      return String(val);
+    });
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map((item) => resolveExpressions(item, context));
+  }
+
+  if (obj && typeof obj === 'object') {
+    const res = {};
+    for (const [k, v] of Object.entries(obj)) {
+      res[k] = resolveExpressions(v, context, k === 'code');
+    }
+    return res;
+  }
+
+  return obj;
+}
+
+/**
  * Handler for individual node types
  */
 async function executeSingleNode(node, context, log) {
   const nodeType = (node.data?.configType || node.data?.type || node.type || '').toLowerCase();
-  const config = node.data?.configuration || node.data || {};
+  const rawConfig = node.data?.configuration || node.data || {};
+  const config = resolveExpressions(rawConfig, context);
 
   switch (nodeType) {
     case 'webhook':
@@ -240,6 +397,7 @@ async function executeSingleNode(node, context, log) {
       return { transformedAt: new Date().toISOString(), input: context.trigger };
     }
 
+    case 'http':
     case 'httprequest':
     case 'http-request': {
       let url = config.url || 'https://jsonplaceholder.typicode.com/posts/1';
@@ -258,6 +416,9 @@ async function executeSingleNode(node, context, log) {
         headers.Authorization = `Bearer ${config.bearerToken}`;
       } else if (config.authentication === 'apiKey') {
         headers[config.apiKeyName] = config.apiKeyValue;
+      } else if (config.authentication === 'basic' && (config.basicUsername || config.basicPassword)) {
+        const credentials = Buffer.from(`${config.basicUsername || ''}:${config.basicPassword || ''}`).toString('base64');
+        headers.Authorization = `Basic ${credentials}`;
       }
 
       if (Array.isArray(config.queryParams) && config.queryParams.length > 0) {
@@ -296,11 +457,29 @@ async function executeSingleNode(node, context, log) {
         try {
           parsed = JSON.parse(responseText);
         } catch {
-          parsed = responseText.slice(0, 400);
+          if (/<html|<!DOCTYPE/i.test(responseText)) {
+            const titleMatch = responseText.match(/<title[^>]*>(.*?)<\/title>/i);
+            const pageTitle = titleMatch ? titleMatch[1].trim() : '';
+            const cleanText = responseText
+              .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+              .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .slice(0, 1500);
+            parsed = pageTitle ? `${pageTitle}\n\n${cleanText}` : cleanText || responseText.slice(0, 500);
+          } else {
+            parsed = responseText.slice(0, 2000);
+          }
         }
 
         log(`HTTP response status: ${response.status} (${response.statusText || 'OK'})`);
-        return { status: response.status, data: parsed };
+        return {
+          status: response.status,
+          statusText: response.statusText || 'OK',
+          data: parsed,
+          text: typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2),
+        };
       } catch (err) {
         clearTimeout(timeoutId);
         throw new Error(`HTTP request failed: ${err.message}`);
@@ -421,48 +600,78 @@ async function executeSingleNode(node, context, log) {
       const connected = isGmailConnected();
       const gmailUser = getGmailUser();
 
-      if (!connected) {
-        const to = config.to || 'pipeline-alerts@syntaxrush.io';
-        const subject = config.subject || 'Workflow automated dispatch';
-        log(`Gmail integration (simulated — not connected): message to <${to}> with subject "${subject}"`);
-        return {
-          sent: true,
-          simulated: true,
-          recipient: to,
-          subject,
-          messageId: `sim_${Date.now()}`,
-        };
-      }
-
-      log(`Gmail connected as ${gmailUser?.email || 'unknown'}. Operation: ${operation}`);
+      log(`Gmail node executing (Operation: ${operation}, Connected: ${connected})`);
 
       try {
         switch (operation) {
           case 'send_email': {
             let to = config.to?.trim() || '';
             if (!to) {
-              if (context.trigger?.to) {
-                to = context.trigger.to;
-              } else if (context.trigger?.from) {
-                const match = context.trigger.from.match(/<([^>]+)>/);
-                to = match ? match[1] : context.trigger.from;
-                log(`Recipient (to) inferred from upstream trigger: <${to}>`);
-              } else if (context.trigger?.sender) {
-                to = context.trigger.sender;
-                log(`Recipient (to) inferred from upstream trigger: <${to}>`);
-              } else if (gmailUser?.email) {
-                to = gmailUser.email;
-                log(`Recipient (to) default to connected account: <${to}>`);
+              // 1. Check predecessor connected nodes from graph edges
+              const predIds = node._predecessorIds || [];
+              for (let p = predIds.length - 1; p >= 0; p--) {
+                const pId = predIds[p];
+                const predOut = context.outputs?.[pId] || context.nodes?.[pId]?.output;
+                const data = predOut?.data || predOut;
+                if (data && typeof data === 'object') {
+                  const candidate = data.email || data.recipient || data.to;
+                  if (typeof candidate === 'string' && candidate.includes('@')) {
+                    to = candidate.trim();
+                    log(`Recipient (to) inferred from predecessor node [${pId}]: <${to}>`);
+                    break;
+                  }
+                }
+              }
+
+              // 2. Check all previous outputs in context
+              if (!to) {
+                for (const prevOutput of Object.values(context.outputs || {}).reverse()) {
+                  const data = prevOutput?.data || prevOutput;
+                  if (data && typeof data === 'object') {
+                    const candidate = data.email || data.recipient || data.to;
+                    if (typeof candidate === 'string' && candidate.includes('@')) {
+                      to = candidate.trim();
+                      log(`Recipient (to) inferred from previous node output: <${to}>`);
+                      break;
+                    }
+                  }
+                }
+              }
+
+              // 3. Check trigger
+              if (!to) {
+                if (context.trigger?.to) {
+                  to = context.trigger.to;
+                } else if (context.trigger?.from) {
+                  const match = context.trigger.from.match(/<([^>]+)>/);
+                  to = match ? match[1] : context.trigger.from;
+                  log(`Recipient (to) inferred from upstream trigger: <${to}>`);
+                } else if (context.trigger?.sender) {
+                  to = context.trigger.sender;
+                  log(`Recipient (to) inferred from upstream trigger: <${to}>`);
+                } else if (gmailUser?.email) {
+                  to = gmailUser.email;
+                  log(`Recipient (to) default to connected account: <${to}>`);
+                }
               }
             }
 
             if (!to) {
-              throw new Error('Recipient email (to) is required. Please specify a recipient in the Gmail node configuration.');
+              if (connected) {
+                throw new Error('Recipient email (to) is required. Please specify a recipient in the Gmail node configuration.');
+              } else {
+                to = 'pipeline-alerts@syntaxrush.io';
+              }
             }
 
             let subject = config.subject?.trim() || '';
             if (!subject) {
-              if (context.trigger?.repository) {
+              const predIds = node._predecessorIds || [];
+              const lastPredId = predIds[predIds.length - 1];
+              const lastOutput = lastPredId ? (context.outputs?.[lastPredId] || context.nodes?.[lastPredId]?.output) : null;
+              if (lastOutput) {
+                subject = `Workflow Step [${lastPredId}] Result (${lastOutput.status || 'Success'})`;
+              } else if (context.trigger?.repository) {
                 subject = `[${context.trigger.repository}] Push commit ${context.trigger.commit} by ${context.trigger.author}`;
               } else if (context.trigger?.subject) {
                 subject = `Re: ${context.trigger.subject}`;
@@ -471,43 +680,112 @@ async function executeSingleNode(node, context, log) {
               }
             }
 
-            let body = config.body?.trim() || '';
+            let body = config.body !== undefined && config.body !== null ? String(config.body).trim() : '';
+            // If body is empty, fall back to predecessor node output (e.g. AI Agent response or HTTP result)
             if (!body) {
-              if (context.trigger?.repository) {
-                body = `New commit change detected on ${context.trigger.repository}\n\n` +
-                  `Branch: ${context.trigger.branch || 'main'}\n` +
-                  `Commit: ${context.trigger.commit || context.trigger.fullSha || 'N/A'}\n` +
-                  `Author: ${context.trigger.author || 'Unknown'}\n` +
-                  `Message: ${context.trigger.message || 'No commit message'}\n` +
-                  (context.trigger.htmlUrl ? `URL: ${context.trigger.htmlUrl}\n` : '') +
-                  `Timestamp: ${context.trigger.timestamp || new Date().toISOString()}\n\n` +
-                  `Dispatched automatically by Kahn Engine workflow.`;
-              } else if (context.trigger?.snippet) {
-                body = `Response to: ${context.trigger.snippet}`;
-              } else {
-                body = 'Automated workflow notification from Kahn Engine.';
+              const predIds = node._predecessorIds || [];
+              for (let p = predIds.length - 1; p >= 0; p--) {
+                const pId = predIds[p];
+                const predNode = context.nodes?.[pId];
+                const candidate = predNode?.output ?? context.outputs?.[pId];
+                if (candidate !== undefined && candidate !== null) {
+                  if (typeof candidate === 'object') {
+                    const extracted = candidate.text || candidate.output || candidate.completion || candidate.response;
+                    if (typeof extracted === 'string') {
+                      body = extracted;
+                    } else if (candidate.data !== undefined) {
+                      body = typeof candidate.data === 'object' ? JSON.stringify(candidate.data, null, 2) : String(candidate.data);
+                    } else {
+                      body = JSON.stringify(candidate, null, 2);
+                    }
+                  } else {
+                    body = String(candidate);
+                  }
+                  log(`Email body populated with output from predecessor node [${pId}].`);
+                  break;
+                }
+              }
+
+              // Fallback to last output in context if no predecessor output found
+              if (!body) {
+                const outputEntries = Object.entries(context.outputs || {});
+                if (outputEntries.length > 0) {
+                  const [lastNodeId, lastOutput] = outputEntries[outputEntries.length - 1];
+                  const dataToFormat = lastOutput?.data !== undefined ? lastOutput.data : lastOutput;
+                  body = typeof dataToFormat === 'object'
+                    ? (dataToFormat.text || dataToFormat.output || dataToFormat.completion || JSON.stringify(dataToFormat, null, 2))
+                    : String(dataToFormat);
+                  log(`Email body populated with output from previous node [${lastNodeId}].`);
+                } else if (context.trigger?.snippet) {
+                  body = `Response to: ${context.trigger.snippet}`;
+                } else {
+                  body = 'Automated workflow notification from Kahn Engine.';
+                }
               }
             }
 
-            log(`Sending email to <${to}>: "${subject}"`);
+            const safeTo = redactSensitive(to);
+            const safeSubject = redactSensitive(subject);
+            const safeBody = redactSensitive(body);
+
+            log(`Resolved email content - To: <${safeTo}>, Subject: "${safeSubject}", Body:\n${safeBody}`);
+
+            if (!connected) {
+              log(`Gmail integration (simulated — not connected): message to <${safeTo}> with subject "${safeSubject}"`);
+              return {
+                sent: true,
+                simulated: true,
+                operation: 'send_email',
+                recipient: to,
+                subject,
+                body,
+                messageId: `sim_${Date.now()}`,
+                timestamp: new Date().toISOString(),
+              };
+            }
+
+            log(`Sending email to <${safeTo}>: "${safeSubject}"`);
             const result = await sendEmail({ to, subject, body, cc: config.cc, bcc: config.bcc });
             log(`Email sent successfully. Message ID: ${result.messageId}`);
-            return { ...result, operation: 'send_email', recipient: to, subject };
+            return { ...result, operation: 'send_email', recipient: to, subject, body };
           }
 
           case 'reply_email': {
             const messageId = config.messageId || context.trigger?.messageId || '';
-            const body = config.body || 'Automated response from Kahn Engine.';
+            let body = config.body !== undefined && config.body !== null ? String(config.body).trim() : '';
+            if (!body) {
+              const predIds = node._predecessorIds || [];
+              for (let p = predIds.length - 1; p >= 0; p--) {
+                const pId = predIds[p];
+                const candidate = context.nodes?.[pId]?.output ?? context.outputs?.[pId];
+                if (candidate) {
+                  body = typeof candidate === 'object'
+                    ? (candidate.text || candidate.output || candidate.completion || JSON.stringify(candidate))
+                    : String(candidate);
+                  break;
+                }
+              }
+            }
+            if (!body) body = 'Automated response from Kahn Engine.';
+            const safeBody = redactSensitive(body);
+            log(`Resolved reply email content - Message ID: ${messageId}, Body:\n${safeBody}`);
+
+            if (!connected) {
+              return { sent: true, simulated: true, operation: 'reply_email', messageId, body };
+            }
             if (!messageId) throw new Error('Message ID is required to reply.');
             log(`Replying to message ${messageId}`);
             const result = await replyToEmail({ messageId, body });
             log(`Reply sent. New message ID: ${result.messageId}`);
-            return { ...result, operation: 'reply_email' };
+            return { ...result, operation: 'reply_email', body };
           }
 
           case 'search_emails': {
             const query = config.searchQuery || 'is:unread';
             log(`Searching emails: "${query}"`);
+            if (!connected) {
+              return { operation: 'search_emails', query, count: 0, messages: [], simulated: true };
+            }
             const result = await searchEmails({ query, maxResults: 10 });
             log(`Found ${result.count} matching emails.`);
             return { ...result, operation: 'search_emails', query };
@@ -516,8 +794,11 @@ async function executeSingleNode(node, context, log) {
           case 'add_label': {
             const messageId = config.messageId || context.trigger?.messageId || '';
             const labelName = config.labelName || 'STARRED';
-            if (!messageId) throw new Error('Message ID is required to add a label.');
             log(`Adding label "${labelName}" to message ${messageId}`);
+            if (!connected) {
+              return { operation: 'add_label', messageId, labelName, simulated: true };
+            }
+            if (!messageId) throw new Error('Message ID is required to add a label.');
             const result = await addLabel({ messageId, labelName });
             log(`Label added successfully.`);
             return { ...result, operation: 'add_label' };
@@ -525,14 +806,16 @@ async function executeSingleNode(node, context, log) {
 
           default: {
             log(`Unknown Gmail operation: ${operation}. Treating as send.`, 'WARN');
-            const to = config.to || '';
+            const to = config.to || 'pipeline-alerts@syntaxrush.io';
             const subject = config.subject || 'Kahn Engine Notification';
             const body = config.body || '';
-            if (to) {
-              const result = await sendEmail({ to, subject, body });
-              return { ...result, operation };
+            const safeBody = redactSensitive(body);
+            log(`Resolved email content - To: <${to}>, Subject: "${subject}", Body:\n${safeBody}`);
+            if (!connected) {
+              return { sent: true, simulated: true, operation, recipient: to, subject, body };
             }
-            return { operation, message: 'No action taken — no recipient specified.' };
+            const result = await sendEmail({ to, subject, body });
+            return { ...result, operation, body };
           }
         }
       } catch (err) {

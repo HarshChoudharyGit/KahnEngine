@@ -5,7 +5,7 @@ import SideBar from './components/SideBar.jsx'
 import LandingPage from './pages/landing/LandingPage.jsx'
 import DashboardPage from './pages/dashboard/DashboardPage.jsx'
 import WorkflowCanvas from './components/WorkflowCanvas.jsx'
-import { getWorkflow } from './services/api.js'
+import { getWorkflow, deleteWorkflow } from './services/api.js'
 
 function LandingRoute() {
   const navigate = useNavigate()
@@ -46,7 +46,11 @@ function Workspace() {
         }
       })
       .catch((err) => {
-        console.error('Failed to load workflow by ID:', err)
+        console.warn('Workflow not found or deleted:', err.message)
+        if (isMounted) {
+          setLoadedWorkflow(null)
+          navigate('/dashboard', { replace: true })
+        }
       })
       .finally(() => {
         if (isMounted) setIsLoadingWorkflow(false)
@@ -56,6 +60,17 @@ function Workspace() {
       isMounted = false
     }
   }, [workflowIdParam])
+
+  const handleDeleteWorkflow = async () => {
+    if (!workflowIdParam) return
+    if (!window.confirm(`Are you sure you want to permanently delete "${workflowTitle}"?`)) return
+    try {
+      await deleteWorkflow(workflowIdParam)
+      navigate('/dashboard')
+    } catch (err) {
+      alert(`Failed to delete workflow: ${err.message}`)
+    }
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#100d0a]">
@@ -82,6 +97,7 @@ function Workspace() {
           saveStatus={saveStatus}
           isActive={isActive}
           onToggleActive={() => setIsActive((prev) => !prev)}
+          onDeleteWorkflow={workflowIdParam ? handleDeleteWorkflow : undefined}
         />
         {isLoadingWorkflow ? (
           <div className="flex flex-1 items-center justify-center bg-[#100d0a]">

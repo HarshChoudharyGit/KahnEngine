@@ -26,8 +26,12 @@ function validateCronExpression(expression) {
 }
 
 function isHttpUrl(value) {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed.includes('{{') && trimmed.includes('}}')) return true;
   try {
-    const url = new URL(value);
+    const url = new URL(trimmed);
     return url.protocol === 'http:' || url.protocol === 'https:';
   } catch {
     return false;
@@ -91,7 +95,7 @@ export function validateNodeConfigurations(nodes = []) {
           errors.push('Select a supported Gmail operation.');
         } else if (operation === 'send_email') {
           required('to', 'Recipient email');
-          if (config.to && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(config.to)) errors.push('Enter a valid recipient email.');
+          if (config.to && !validEmail(config.to)) errors.push('Enter a valid recipient email.');
           required('subject', 'Email subject');
           required('body', 'Email body');
         } else if (operation === 'reply_email' || operation === 'add_label') {
@@ -115,11 +119,12 @@ export function validateNodeConfigurations(nodes = []) {
         }
         break;
       }
+      case 'http':
       case 'httprequest':
       case 'http-request': {
         if (!isHttpUrl(String(config.url || ''))) errors.push('Enter a valid HTTP or HTTPS request URL.');
         const method = String(config.method || 'GET').toUpperCase();
-        if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) errors.push('Choose a supported HTTP method.');
+        if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(method)) errors.push('Choose a supported HTTP method.');
         validateKeyValueRows(config.headers ?? [], 'Headers', errors);
         validateKeyValueRows(config.queryParams ?? [], 'Query parameters', errors);
         const authentication = config.authentication || 'none';
@@ -127,7 +132,9 @@ export function validateNodeConfigurations(nodes = []) {
         else if (authentication === 'apiKey') {
           required('apiKeyName', 'API key header name');
           required('apiKeyValue', 'API key value');
-        } else if (!['none', 'bearer'].includes(authentication)) {
+        } else if (authentication === 'basic') {
+          required('basicUsername', 'Username');
+        } else if (!['none', 'bearer', 'apiKey', 'basic'].includes(authentication)) {
           errors.push('Choose a supported authentication method.');
         }
         break;

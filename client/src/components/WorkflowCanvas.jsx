@@ -130,7 +130,9 @@ function hydrateWorkflowNodes(nodes) {
       ...node,
       type: node.type || 'workflow',
       data: {
+        ...option,
         ...node.data,
+        configType: node.data?.configType || option?.configType,
         icon: option?.icon || Sparkles,
         accent: node.data?.accent || option?.accent || '#d4ad58',
         status: 'idle',
@@ -168,14 +170,14 @@ function WorkflowEditor({
   const initialCanvasNodes = templateWorkflow
     ? templateWorkflow.nodes
     : loadedWorkflow
-    ? hydrateWorkflowNodes(loadedWorkflow.nodes)
-    : initialNodes
+      ? hydrateWorkflowNodes(loadedWorkflow.nodes)
+      : initialNodes
 
   const initialCanvasEdges = templateWorkflow
     ? templateWorkflow.edges
     : loadedWorkflow
-    ? hydrateWorkflowEdges(loadedWorkflow.edges)
-    : initialEdges
+      ? hydrateWorkflowEdges(loadedWorkflow.edges)
+      : initialEdges
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialCanvasNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialCanvasEdges)
@@ -481,19 +483,19 @@ function WorkflowEditor({
             currentNodes.map((n) =>
               n.id === nodeId
                 ? {
-                    ...n,
-                    data: {
-                      ...n.data,
-                      status:
-                        status === 'RUNNING'
-                          ? 'running'
-                          : status === 'SUCCESS'
+                  ...n,
+                  data: {
+                    ...n.data,
+                    status:
+                      status === 'RUNNING'
+                        ? 'running'
+                        : status === 'SUCCESS'
                           ? 'success'
                           : status === 'FAILED'
-                          ? 'error'
-                          : 'idle',
-                    },
-                  }
+                            ? 'error'
+                            : 'idle',
+                  },
+                }
                 : n,
             ),
           )
@@ -548,11 +550,11 @@ function WorkflowEditor({
             prev.map((item) =>
               item.id === executionId
                 ? {
-                    ...item,
-                    status: 'complete',
-                    finishedAt: new Date().toISOString(),
-                    durationMs: durationMs ?? (item.durationMs || 0),
-                  }
+                  ...item,
+                  status: 'complete',
+                  finishedAt: new Date().toISOString(),
+                  durationMs: durationMs ?? (item.durationMs || 0),
+                }
                 : item,
             ),
           )
@@ -569,12 +571,12 @@ function WorkflowEditor({
             prev.map((item) =>
               item.id === executionId
                 ? {
-                    ...item,
-                    status: 'failed',
-                    error,
-                    finishedAt: new Date().toISOString(),
-                    durationMs: durationMs ?? (item.durationMs || 0),
-                  }
+                  ...item,
+                  status: 'failed',
+                  error,
+                  finishedAt: new Date().toISOString(),
+                  durationMs: durationMs ?? (item.durationMs || 0),
+                }
                 : item,
             ),
           )
@@ -647,16 +649,16 @@ function WorkflowEditor({
     setNodes((currentNodes) => currentNodes.map((node) => (
       node.id === nodeId
         ? {
-            ...node,
-            data: {
-              ...node.data,
-              ...(!node.data.configType
-                ? { title: configuration.title, subtitle: configuration.subtitle }
-                : {}),
-              configuration,
-              configurationStatus: 'configured',
-            },
-          }
+          ...node,
+          data: {
+            ...node.data,
+            ...(!node.data.configType
+              ? { title: configuration.title, subtitle: configuration.subtitle }
+              : {}),
+            configuration,
+            configurationStatus: 'configured',
+          },
+        }
         : node
     )))
     setSelectedNodeId(null)
@@ -743,22 +745,20 @@ function WorkflowEditor({
             <section
               role="alert"
               aria-labelledby="workflow-notice-title"
-              className={`absolute left-1/2 top-4 z-30 w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 overflow-hidden rounded-xl border shadow-2xl backdrop-blur-xl ${
-                workflowNotice.type === 'error'
+              className={`absolute left-1/2 top-4 z-30 w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 overflow-hidden rounded-xl border shadow-2xl backdrop-blur-xl ${workflowNotice.type === 'error'
                   ? 'border-rose-500/35 bg-[#241713]/[.97]'
                   : workflowNotice.type === 'cycle'
                     ? 'border-amber-500/35 bg-[#251d12]/[.97]'
                     : 'border-[#8e7139]/45 bg-[#201a12]/[.98]'
-              }`}
+                }`}
             >
               <div className="flex items-start gap-3 px-4 py-3.5">
-                <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-                  workflowNotice.type === 'error'
+                <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${workflowNotice.type === 'error'
                     ? 'bg-rose-500/10 text-rose-300'
                     : workflowNotice.type === 'cycle'
                       ? 'bg-amber-500/10 text-amber-300'
                       : 'bg-[#d4ad58]/10 text-[#e2bd67]'
-                }`}>
+                  }`}>
                   <AlertCircle aria-hidden="true" className="h-4 w-4" />
                 </span>
                 <div className="min-w-0 flex-1">
@@ -886,6 +886,8 @@ function WorkflowEditor({
 
           <NodeConfigSidebar
             node={selectedNode}
+            nodes={nodes}
+            edges={edges}
             onClose={() => setSelectedNodeId(null)}
             onDelete={deleteNode}
             onSave={saveNodeConfiguration}

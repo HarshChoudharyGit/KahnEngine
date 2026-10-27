@@ -296,6 +296,8 @@ function DashboardPage() {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [serverStatus, setServerStatus] = useState('checking') // 'checking' | 'online' | 'offline'
   const [deleteConfirm, setDeleteConfirm] = useState(null) // { id, name }
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState(null)
 
   const loadData = useCallback(async (showRefreshIndicator = false) => {
     if (showRefreshIndicator) setIsRefreshing(true)
@@ -358,17 +360,22 @@ function DashboardPage() {
 
   const handleDeleteRequest = (id, name) => {
     setDeleteConfirm({ id, name })
+    setDeleteError(null)
   }
 
   const handleDeleteConfirm = async () => {
-    if (!deleteConfirm) return
+    if (!deleteConfirm || isDeleting) return
+    setIsDeleting(true)
+    setDeleteError(null)
     try {
       await deleteWorkflow(deleteConfirm.id)
       setWorkflows((prev) => prev.filter((w) => w.id !== deleteConfirm.id))
+      setDeleteConfirm(null)
     } catch (err) {
       console.error('Failed to delete:', err)
+      setDeleteError(err.message || 'Failed to delete workflow')
     } finally {
-      setDeleteConfirm(null)
+      setIsDeleting(false)
     }
   }
 
@@ -627,20 +634,27 @@ function DashboardPage() {
               This will permanently delete <strong className="text-[#e5d8b8]">"{deleteConfirm.name}"</strong>.
               This action cannot be undone.
             </p>
+            {deleteError && (
+              <p className="mt-2.5 rounded border border-rose-800/40 bg-rose-950/40 p-2 text-xs text-rose-300">
+                {deleteError}
+              </p>
+            )}
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
                 type="button"
+                disabled={isDeleting}
                 onClick={() => setDeleteConfirm(null)}
-                className="rounded-lg border border-[#8e7139]/35 px-4 py-2 text-xs font-medium text-[#c9b991] transition hover:bg-[#d4ad58]/8"
+                className="rounded-lg border border-[#8e7139]/35 px-4 py-2 text-xs font-medium text-[#c9b991] transition hover:bg-[#d4ad58]/8 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="button"
+                disabled={isDeleting}
                 onClick={handleDeleteConfirm}
-                className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-500"
+                className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-500 disabled:opacity-50 inline-flex items-center gap-1.5"
               >
-                Delete
+                {isDeleting ? 'Deleting…' : 'Delete'}
               </button>
             </div>
           </div>

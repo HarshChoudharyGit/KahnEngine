@@ -1,11 +1,14 @@
 import { pool } from './db.js';
 
+// Matches standard RFC 4122 UUID strings
 const UUID_PATTERN = /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i;
 
+// Returns client-facing ID, preferring legacy string ID over database UUID
 function publicId(row) {
   return row.legacy_id || row.id;
 }
 
+// Formats a database workflow row into a client-facing workflow object
 function mapWorkflow(row) {
   if (!row) return null;
   return {
@@ -21,6 +24,7 @@ function mapWorkflow(row) {
   };
 }
 
+// Maps internal DB execution statuses to public API status strings
 function externalExecutionStatus(status) {
   return {
     queued: 'PENDING',
@@ -31,6 +35,7 @@ function externalExecutionStatus(status) {
   }[status] || status.toUpperCase();
 }
 
+// Maps internal node execution statuses to public API status strings
 function externalNodeStatus(status) {
   return {
     pending: 'PENDING',
@@ -42,6 +47,7 @@ function externalNodeStatus(status) {
   }[status] || status.toUpperCase();
 }
 
+// Formats execution record with its associated node steps and sanitized logs
 function mapExecution(row, nodeRows = [], logRows = []) {
   if (!row) return null;
   const nodeStatuses = {};
@@ -83,6 +89,7 @@ function mapExecution(row, nodeRows = [], logRows = []) {
   };
 }
 
+// Finds a workflow by legacy string ID or UUID, optionally locking the row FOR UPDATE
 async function selectWorkflow(client, id, forUpdate = false) {
   const { rows } = await client.query(
     `SELECT * FROM workflows WHERE legacy_id = $1 OR id::text = $1
@@ -92,6 +99,7 @@ async function selectWorkflow(client, id, forUpdate = false) {
   return rows[0] || null;
 }
 
+// Serializes workflow nodes and edges into JSON string for DB storage
 function workflowDefinition(workflow) {
   return JSON.stringify({
     ...(workflow.definition || {}),
@@ -100,6 +108,7 @@ function workflowDefinition(workflow) {
   });
 }
 
+// Extracts cron trigger nodes and syncs active schedules in workflow_schedules table
 async function syncSchedules(client, workflowId, nodes) {
   const scheduled = [];
   for (const node of nodes) {
@@ -115,6 +124,7 @@ async function syncSchedules(client, workflowId, nodes) {
     scheduled.push({ nodeId: node.id, cronExpression: configuration.schedule, timezone });
   }
 
+  // Insert or update configured schedules
   for (const schedule of scheduled) {
     await client.query(
       `INSERT INTO workflow_schedules (workflow_id, node_id, cron_expression, timezone)
@@ -127,6 +137,8 @@ async function syncSchedules(client, workflowId, nodes) {
       [workflowId, schedule.nodeId, schedule.cronExpression, schedule.timezone],
     );
   }
+
+  // Remove deleted or decommissioned schedules
   const nodeIds = scheduled.map((schedule) => schedule.nodeId);
   await client.query(
     `DELETE FROM workflow_schedules
@@ -135,6 +147,7 @@ async function syncSchedules(client, workflowId, nodes) {
   );
 }
 
+// Inserts a new workflow or updates an existing one, auto-incrementing version on changes
 async function upsertWorkflow(client, workflow) {
   const existing = await selectWorkflow(client, workflow.id, true);
   const definition = workflowDefinition(workflow);
@@ -173,6 +186,7 @@ async function upsertWorkflow(client, workflow) {
   return result;
 }
 
+// Determines execution trigger source based on payload properties
 function inferTriggerType(payload = {}) {
   if (payload.source === 'github-poller') return 'github_webhook';
   if (payload.source === 'schedule' || payload.triggerType === 'schedule') return 'schedule';
@@ -181,6 +195,7 @@ function inferTriggerType(payload = {}) {
   return 'manual';
 }
 
+// Inserts a new workflow execution row inside an active client transaction
 async function insertExecution(client, record) {
   const workflow = await selectWorkflow(client, record.workflowId);
   if (!workflow) throw new Error(`Workflow "${record.workflowId}" does not exist`);
@@ -202,6 +217,7 @@ async function insertExecution(client, record) {
   return rows[0];
 }
 
+// Batch queries node execution and log rows for an array of execution UUIDs
 async function executionRows(ids) {
   if (!ids.length) return { nodeRows: [], logRows: [] };
   const [nodes, logs] = await Promise.all([
@@ -219,6 +235,7 @@ async function executionRows(ids) {
   return { nodeRows: nodes.rows, logRows: logs.rows };
 }
 
+// Maps multiple DB execution rows together with their corresponding node steps and logs
 function mapExecutions(rows, nodeRows, logRows) {
   return rows.map((row) => mapExecution(
     row,
@@ -227,6 +244,7 @@ function mapExecutions(rows, nodeRows, logRows) {
   ));
 }
 
+// Creates or updates a workflow in a database transaction
 export async function saveWorkflow(workflow) {
   const client = await pool.connect();
   try {
@@ -242,11 +260,13 @@ export async function saveWorkflow(workflow) {
   }
 }
 
+// Retrieves a single workflow by legacy ID or UUID
 export async function getWorkflow(id) {
   const row = await selectWorkflow(pool, id);
   return mapWorkflow(row);
 }
 
+// Returns a paginated list of workflows ordered by recent update
 export async function listWorkflows({ limit = 100, offset = 0 } = {}) {
   const { rows } = await pool.query(
     'SELECT * FROM workflows ORDER BY updated_at DESC LIMIT $1 OFFSET $2',
@@ -255,6 +275,7 @@ export async function listWorkflows({ limit = 100, offset = 0 } = {}) {
   return rows.map(mapWorkflow);
 }
 
+// Retrieves all workflows across all pages
 export async function listAllWorkflows() {
   const workflows = [];
   for (let offset = 0; ; offset += 100) {
@@ -264,13 +285,27 @@ export async function listAllWorkflows() {
   }
 }
 
+// Deletes a workflow by legacy ID or UUID and cascades associated executions and schedules
 export async function deleteWorkflow(id) {
   const row = await selectWorkflow(pool, id);
   if (!row) return false;
-  const { rowCount } = await pool.query('DELETE FROM workflows WHERE id = $1', [row.id]);
-  return rowCount > 0;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM workflow_executions WHERE workflow_id = $1', [row.id]);
+    await client.query('DELETE FROM workflow_schedules WHERE workflow_id = $1', [row.id]);
+    const { rowCount } = await client.query('DELETE FROM workflows WHERE id = $1', [row.id]);
+    await client.query('COMMIT');
+    return rowCount > 0;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
+// Creates a new execution record for a workflow
 export async function createExecution(record) {
   const { rows } = await pool.query(
     `WITH workflow AS (
@@ -295,6 +330,7 @@ export async function createExecution(record) {
   return { ...mapExecution(rows[0]), workflowName: record.workflowName };
 }
 
+// Atomically persists a workflow and creates an execution for it
 export async function saveWorkflowAndCreateExecution(workflow, record) {
   const client = await pool.connect();
   try {
@@ -317,6 +353,7 @@ export async function saveWorkflowAndCreateExecution(workflow, record) {
   }
 }
 
+// Internal query helper to fetch single execution row joined with workflow info
 async function getExecutionRows(where, params) {
   const { rows } = await pool.query(
     `SELECT e.*, w.name AS workflow_name, w.legacy_id AS workflow_legacy_id
@@ -328,6 +365,7 @@ async function getExecutionRows(where, params) {
   return rows;
 }
 
+// Fetches an execution by ID including its node execution steps and logs
 export async function getExecution(id) {
   const rows = await getExecutionRows('e.legacy_id = $1 OR e.id::text = $1', [id]);
   if (!rows[0]) return null;
@@ -335,6 +373,7 @@ export async function getExecution(id) {
   return mapExecution(rows[0], nodeRows, logRows);
 }
 
+// Lists executions optionally filtered by workflowId with node steps and logs
 export async function listExecutions({ workflowId = null, limit = 100, offset = 0 } = {}) {
   const { rows } = await pool.query(
     `SELECT e.*, w.name AS workflow_name, w.legacy_id AS workflow_legacy_id
@@ -349,11 +388,13 @@ export async function listExecutions({ workflowId = null, limit = 100, offset = 
   return mapExecutions(rows, nodeRows, logRows);
 }
 
+// Deletes all workflow execution history
 export async function clearExecutions() {
   const { rowCount } = await pool.query('DELETE FROM workflow_executions');
   return rowCount;
 }
 
+// Updates execution status, timestamps, trigger payload, or error message
 export async function updateExecution(id, partial) {
   const fields = [];
   const values = [id];
@@ -388,6 +429,7 @@ export async function updateExecution(id, partial) {
   return rows[0] ? getExecution(id) : null;
 }
 
+// Marks execution as running and initializes pending records for all workflow nodes
 export async function startExecution(executionId, nodes) {
   const client = await pool.connect();
   try {
@@ -417,6 +459,7 @@ export async function startExecution(executionId, nodes) {
   }
 }
 
+// Records start of an individual node execution with its input payload
 export async function startNodeExecution(executionId, { nodeId, nodeType, input }) {
   const { rows } = await pool.query(
     `INSERT INTO node_executions
@@ -432,6 +475,7 @@ export async function startNodeExecution(executionId, { nodeId, nodeType, input 
   if (!rows[0]) throw new Error(`Execution "${executionId}" does not exist`);
 }
 
+// Records completion or failure of a node execution with its output/error
 export async function finishNodeExecution(executionId, { nodeId, status, output, error }) {
   const result = await pool.query(
     `UPDATE node_executions n SET
@@ -444,6 +488,7 @@ export async function finishNodeExecution(executionId, { nodeId, status, output,
   if (!result.rowCount) throw new Error(`Node execution "${nodeId}" was not started`);
 }
 
+// Appends a sanitized log message associated with an execution (and optional node)
 export async function appendLog(executionId, logEntry) {
   const sanitized = sanitizeLogEntry(logEntry);
   const metadata = { ...sanitized };
@@ -471,6 +516,7 @@ export async function appendLog(executionId, logEntry) {
   if (!rowCount) throw new Error(`Execution "${executionId}" does not exist`);
 }
 
+// Redacts sensitive keys and auth tokens from log entries before persistence
 export function sanitizeLogEntry(logEntry) {
   const sanitized = {};
   for (const [key, value] of Object.entries(logEntry)) {
@@ -487,6 +533,7 @@ export function sanitizeLogEntry(logEntry) {
   return sanitized;
 }
 
+// Stores or updates OAuth / API connection credentials and status for a provider
 export async function upsertIntegrationConnection(provider, accountName, status, scopes = []) {
   await pool.query(
     `INSERT INTO integration_connections (provider, account_name, status, scopes)
@@ -497,3 +544,4 @@ export async function upsertIntegrationConnection(provider, accountName, status,
     [provider, accountName || null, status, scopes],
   );
 }
+

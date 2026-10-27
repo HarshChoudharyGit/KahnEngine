@@ -5,13 +5,151 @@ const inputClassName =
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
 
-function GmailConfigForm({ schema, value, errors = {}, onChange }) {
+function VariablePicker({ fieldKey, onSelect, predecessorNodes = [] }) {
+  const [open, setOpen] = useState(false)
+
+  const options = []
+
+  for (const pred of predecessorNodes) {
+    const id = pred.id
+    const title = pred.data?.title || pred.data?.label || id
+    const type = (pred.data?.configType || pred.data?.type || pred.type || '').toLowerCase()
+
+    if (type.includes('ai') || type.includes('agent')) {
+      options.push({
+        group: `${title} (${id})`,
+        items: [
+          { label: 'AI Output Text', expr: `{{nodes.${id}.output.text}}`, desc: 'Generated text response' },
+          { label: 'Full AI Output', expr: `{{nodes.${id}.output}}`, desc: 'Entire response object' },
+        ],
+      })
+    } else if (type.includes('http')) {
+      options.push({
+        group: `${title} (${id})`,
+        items: [
+          { label: 'Response Data', expr: `{{nodes.${id}.output.data}}`, desc: 'HTTP response body' },
+          { label: 'Status Code', expr: `{{nodes.${id}.output.status}}`, desc: 'HTTP status' },
+          { label: 'Full Output', expr: `{{nodes.${id}.output}}`, desc: 'Entire response object' },
+        ],
+      })
+    } else if (type.includes('trigger')) {
+      options.push({
+        group: `${title} (${id})`,
+        items: [
+          { label: 'Trigger Body', expr: '{{trigger.body}}', desc: 'Payload body' },
+          { label: 'Sender Email', expr: '{{trigger.from}}', desc: 'Incoming sender email' },
+          { label: 'Subject', expr: '{{trigger.subject}}', desc: 'Incoming subject' },
+        ],
+      })
+    } else {
+      options.push({
+        group: `${title} (${id})`,
+        items: [
+          { label: 'Node Output', expr: `{{nodes.${id}.output}}`, desc: 'Standard node output' },
+        ],
+      })
+    }
+  }
+
+  // Also include general trigger variables
+  options.push({
+    group: 'Trigger Data',
+    items: [
+      { label: 'Trigger Payload', expr: '{{trigger.body}}', desc: 'Incoming webhook/event payload' },
+      { label: 'Sender', expr: '{{trigger.sender}}', desc: 'Sender identity if provided' },
+    ],
+  })
+
+  const quickItems = options.flatMap((g) => g.items).slice(0, 3)
+
+  return (
+    <div className="mt-1.5 space-y-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] uppercase tracking-wider text-[#8e7139]">Dynamic Vars:</span>
+        {predecessorNodes.length === 0 ? (
+          <span className="text-[11px] text-[#756b5a] italic">
+            Connect upstream nodes to pick dynamic variables
+          </span>
+        ) : (
+          quickItems.map((item) => (
+            <button
+              key={item.expr}
+              type="button"
+              onClick={() => onSelect(item.expr)}
+              title={item.desc}
+              className="inline-flex items-center gap-1 rounded bg-[#1f1912] border border-[#8e7139]/30 px-1.5 py-0.5 text-[10px] font-mono text-[#e5cf9b] hover:border-[#c69b45] hover:bg-[#c69b45]/15 transition"
+            >
+              <span>+</span>
+              <span>{item.label}</span>
+            </button>
+          ))
+        )}
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="text-[10px] text-[#c69b45] underline hover:text-[#f0e5c9] ml-auto"
+        >
+          {open ? 'Hide options' : 'More...'}
+        </button>
+      </div>
+
+      {open && (
+        <div className="mt-2 rounded-md border border-[#8e7139]/40 bg-[#16120e] p-2 text-xs shadow-xl space-y-2 max-h-48 overflow-y-auto">
+          {options.map((grp) => (
+            <div key={grp.group}>
+              <div className="text-[10px] font-semibold text-[#a9997b] mb-1">{grp.group}</div>
+              <div className="flex flex-wrap gap-1">
+                {grp.items.map((it) => (
+                  <button
+                    key={it.expr}
+                    type="button"
+                    onClick={() => {
+                      onSelect(it.expr)
+                      setOpen(false)
+                    }}
+                    className="flex flex-col text-left rounded bg-[#100d0a] border border-[#8e7139]/25 px-2 py-1 hover:border-[#c69b45] hover:bg-[#c69b45]/10"
+                  >
+                    <span className="text-[11px] font-mono text-[#f0e5c9]">{it.expr}</span>
+                    <span className="text-[9px] text-[#8f8065]">{it.desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GmailConfigForm({ schema, value, errors = {}, onChange, node, nodes = [], edges = [] }) {
   const [connected, setConnected] = useState(false)
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState('')
   const [connectionMessage, setConnectionMessage] = useState('')
+
+  const currentNodeId = node?.id
+  const incomingEdges = (edges || []).filter((e) => e.target === currentNodeId)
+  const predecessorNodes = incomingEdges
+    .map((e) => (nodes || []).find((n) => n.id === e.source))
+    .filter(Boolean)
 
   const setField = (key, nextValue) =>
     onChange({ ...value, [key]: nextValue })
+
+  const handleInsertVariable = (fieldKey, expr) => {
+    const currentVal = value[fieldKey] || ''
+    let nextVal = expr
+    if (currentVal) {
+      if (fieldKey === 'to') {
+        nextVal = `${currentVal}, ${expr}`
+      } else if (fieldKey === 'body') {
+        nextVal = `${currentVal}\n\n${expr}`
+      } else {
+        nextVal = `${currentVal} ${expr}`
+      }
+    }
+    setField(fieldKey, nextVal)
+  }
 
 
   useEffect(() => {
@@ -240,6 +378,14 @@ function GmailConfigForm({ schema, value, errors = {}, onChange }) {
                 {...commonProps}
                 type={field.type === 'text' ? 'text' : field.type}
                 placeholder={field.placeholder}
+              />
+            )}
+
+            {['to', 'subject', 'body'].includes(field.key) && (
+              <VariablePicker
+                fieldKey={field.key}
+                predecessorNodes={predecessorNodes}
+                onSelect={(expr) => handleInsertVariable(field.key, expr)}
               />
             )}
 

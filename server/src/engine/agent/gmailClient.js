@@ -138,25 +138,154 @@ export function hasGoogleOAuthConfig() {
 // Gmail operations
 // ---------------------------------------------------------------------------
 
+export function escapeHtml(str) {
+  if (typeof str !== 'string') return String(str ?? '');
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+export function formatPlainTextToHtml(text) {
+  if (/<[a-z][\s\S]*>/i.test(text)) {
+    return text;
+  }
+  const paragraphs = text.split(/\n{2,}/);
+  return paragraphs
+    .map((p) => {
+      let trimmed = p.trim();
+      if (!trimmed) return '';
+      if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+        const items = trimmed
+          .split('\n')
+          .filter((line) => line.trim().startsWith('- ') || line.trim().startsWith('* '))
+          .map((line) => `<li style="margin-bottom: 6px;">${escapeHtml(line.replace(/^[-*]\s+/, ''))}</li>`)
+          .join('');
+        return `<ul style="margin: 0 0 16px; padding-left: 20px;">${items}</ul>`;
+      }
+      let safe = escapeHtml(trimmed).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      safe = safe.replace(/\n/g, '<br/>');
+      return `<p style="margin: 0 0 16px; line-height: 1.6;">${safe}</p>`;
+    })
+    .join('');
+}
+
+export function renderEmailHtml({ subject = '', body = '' } = {}) {
+  if (!body) return '<p style="color:#64748b;">No content provided.</p>';
+
+  const trimmed = typeof body === 'string' ? body.trim() : '';
+
+  // Check if body is already a complete standalone HTML document
+  if (/^<!DOCTYPE\s+html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) {
+    return body;
+  }
+  let formattedContent = '';
+  let parsedJson = null;
+
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      parsedJson = JSON.parse(trimmed);
+    } catch {
+      parsedJson = null;
+    }
+  } else if (typeof body === 'object' && body !== null) {
+    parsedJson = body;
+  }
+
+  if (parsedJson) {
+    if (parsedJson.status && parsedJson.data !== undefined) {
+      const isSuccess = parsedJson.status >= 200 && parsedJson.status < 300;
+      const statusBadge = `
+        <div style="display: inline-block; padding: 4px 10px; font-size: 12px; font-weight: 600; border-radius: 4px; background-color: ${isSuccess ? '#ecfdf5' : '#fef2f2'}; color: ${isSuccess ? '#047857' : '#b91c1c'}; margin-bottom: 14px;">
+          HTTP ${parsedJson.status} ${isSuccess ? 'Success' : 'Error'}
+        </div>
+      `;
+
+      let dataContent = '';
+      if (typeof parsedJson.data === 'string') {
+        if (/<[^>]+>/.test(parsedJson.data)) {
+          const clean = parsedJson.data
+            .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+            .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          dataContent = `<div style="padding: 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; line-height: 1.6; color: #334155;">${escapeHtml(clean.slice(0, 2000))}</div>`;
+        } else {
+          dataContent = `<div style="padding: 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; line-height: 1.6; color: #334155; white-space: pre-wrap;">${escapeHtml(parsedJson.data)}</div>`;
+        }
+      } else {
+        dataContent = `<pre style="margin: 0; padding: 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; line-height: 1.5; color: #1e293b; overflow-x: auto; font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;">${escapeHtml(JSON.stringify(parsedJson.data, null, 2))}</pre>`;
+      }
+      formattedContent = `${statusBadge}${dataContent}`;
+    } else if (parsedJson.text || parsedJson.completion || parsedJson.output) {
+      const text = parsedJson.text || parsedJson.completion || parsedJson.output;
+      formattedContent = formatPlainTextToHtml(String(text));
+    } else {
+      formattedContent = `<pre style="margin: 0; padding: 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; line-height: 1.5; color: #1e293b; overflow-x: auto; font-family: ui-monospace, Menlo, Monaco, Consolas, monospace;">${escapeHtml(JSON.stringify(parsedJson, null, 2))}</pre>`;
+    }
+  } else {
+    formattedContent = formatPlainTextToHtml(String(body));
+  }
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(subject || 'Workflow Notification')}</title>
+</head>
+<body style="margin: 0; padding: 24px; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #0f172a; -webkit-font-smoothing: antialiased;">
+  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 620px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); overflow: hidden;">
+    <tr>
+      <td style="padding: 20px 24px; background: #17120e; border-bottom: 2px solid #c69b45;">
+        <span style="font-size: 16px; font-weight: 700; color: #f0e5c9; letter-spacing: 0.5px;">KAHN ENGINE</span>
+        <span style="display: block; font-size: 11px; color: #a9997b; margin-top: 2px;">Automated Workflow Dispatch</span>
+      </td>
+    </tr>
+    ${subject ? `
+    <tr>
+      <td style="padding: 16px 24px 8px; border-bottom: 1px solid #f1f5f9;">
+        <h2 style="margin: 0; font-size: 18px; font-weight: 600; color: #0f172a;">${escapeHtml(subject)}</h2>
+      </td>
+    </tr>
+    ` : ''}
+    <tr>
+      <td style="padding: 24px; font-size: 14px; line-height: 1.6; color: #334155;">
+        ${formattedContent}
+      </td>
+    </tr>
+    <tr>
+      <td style="padding: 16px 24px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; font-size: 11px; color: #94a3b8; text-align: center;">
+        Dispatched automatically by your Kahn Engine automated workflow pipeline.
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`.trim();
+}
+
 /** Send an email */
 export async function sendEmail({ to, subject, body, cc = '', bcc = '' }) {
   const auth = getAuthenticatedClient();
   if (!auth) throw new Error('Gmail not connected. Please authorize first.');
 
   const gmail = google.gmail({ version: 'v1', auth });
+  const htmlContent = renderEmailHtml({ subject, body });
 
-  const messageParts = [
+  const headers = [
     `From: ${activeGmailUser?.email || 'me'}`,
     `To: ${to}`,
-    cc ? `Cc: ${cc}` : '',
-    bcc ? `Bcc: ${bcc}` : '',
+    cc ? `Cc: ${cc}` : null,
+    bcc ? `Bcc: ${bcc}` : null,
     `Subject: ${subject}`,
+    'MIME-Version: 1.0',
     'Content-Type: text/html; charset=utf-8',
-    '',
-    body,
   ].filter(Boolean);
 
-  const rawMessage = Buffer.from(messageParts.join('\r\n'))
+  const rawMessage = Buffer.from(`${headers.join('\r\n')}\r\n\r\n${htmlContent}`)
     .toString('base64')
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
@@ -246,18 +375,19 @@ export async function replyToEmail({ messageId, body }) {
     ? headers.subject
     : `Re: ${headers.subject || ''}`;
 
-  const messageParts = [
+  const htmlContent = renderEmailHtml({ subject, body });
+
+  const headersList = [
     `From: ${activeGmailUser?.email || 'me'}`,
     `To: ${replyTo}`,
     `Subject: ${subject}`,
     `In-Reply-To: ${headers['message-id'] || ''}`,
     `References: ${headers['message-id'] || ''}`,
+    'MIME-Version: 1.0',
     'Content-Type: text/html; charset=utf-8',
-    '',
-    body,
-  ];
+  ].filter(Boolean);
 
-  const rawMessage = Buffer.from(messageParts.join('\r\n'))
+  const rawMessage = Buffer.from(`${headersList.join('\r\n')}\r\n\r\n${htmlContent}`)
     .toString('base64')
     .replace(/\+/g, '-')
     .replace(/\//g, '_')

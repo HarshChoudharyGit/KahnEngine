@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, LoaderCircle, MoreHorizontal, Plus, RotateCcw, Save } from 'lucide-react'
+import { Check, LoaderCircle, MoreHorizontal, Plus, RotateCcw, Save, Trash2 } from 'lucide-react'
 
 const Header = ({
   activeTab,
@@ -11,9 +11,11 @@ const Header = ({
   saveStatus = 'saved',
   isActive = false,
   onToggleActive,
+  onDeleteWorkflow,
 }) => {
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(workflowTitle)
+  const [showMenu, setShowMenu] = useState(false)
 
   const handleTitleSubmit = (e) => {
     e.preventDefault()
@@ -140,13 +142,40 @@ const Header = ({
         >
           <RotateCcw aria-hidden="true" className="h-4 w-4" />
         </button>
-        <button
-          type="button"
-          aria-label="More workflow options"
-          className="flex h-8 w-8 items-center justify-center rounded-md text-[#a9997b] transition hover:bg-[#d4ad58]/8 hover:text-[#f0d58e]"
-        >
-          <MoreHorizontal aria-hidden="true" className="h-5 w-5" />
-        </button>
+        <div className="relative">
+          <button
+            type="button"
+            aria-label="More workflow options"
+            onClick={() => setShowMenu((prev) => !prev)}
+            className="flex h-8 w-8 items-center justify-center rounded-md text-[#a9997b] transition hover:bg-[#d4ad58]/8 hover:text-[#f0d58e]"
+          >
+            <MoreHorizontal aria-hidden="true" className="h-5 w-5" />
+          </button>
+          {showMenu && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
+              <div className="absolute right-0 top-9 z-50 min-w-44 rounded-lg border border-[#8e7139]/40 bg-[#17120e] p-1.5 shadow-2xl">
+                {onDeleteWorkflow ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false)
+                      onDeleteWorkflow()
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-[#d98a74] transition hover:bg-[#8f4d3b]/15"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete workflow
+                  </button>
+                ) : (
+                  <span className="block px-3 py-1.5 text-[11px] text-[#756b5a] italic">
+                    No actions available
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </header>
   )

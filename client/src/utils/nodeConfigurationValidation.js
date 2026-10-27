@@ -20,7 +20,7 @@ function hasRequiredValue(value) {
 export function validateNodeConfigurations(nodes) {
   return nodes.flatMap((node) => {
     const data = node.data ?? {}
-    const schema = getNodeConfigSchema(data.configType)
+    const schema = getNodeConfigSchema(data.configType || data.type || node.type || data.title)
     const configuration = data.configuration ?? {}
     const form = {
       ...schema.fields.reduce((defaults, field) => {

@@ -138,3 +138,44 @@ export function connectTelemetryStream(executionId, handlers = {}) {
     eventSource.close();
   };
 }
+
+export async function validateCronApi(cronExpression, timezone = 'Asia/Kolkata') {
+  const res = await fetch(`${API_BASE_URL}/api/v1/schedules/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cronExpression, timezone }),
+  });
+  return res.json();
+}
+
+export async function registerScheduleApi(scheduleData) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/schedules`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(scheduleData),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to register schedule');
+  }
+  return data;
+}
+
+export async function runScheduleNowApi(scheduleId) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/schedules/${scheduleId}/run`, {
+    method: 'POST',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to run schedule');
+  }
+  return data;
+}
+
+export async function listSchedulesApi(workflowId) {
+  const url = workflowId
+    ? `${API_BASE_URL}/api/v1/schedules?workflowId=${encodeURIComponent(workflowId)}`
+    : `${API_BASE_URL}/api/v1/schedules`;
+  const res = await fetch(url);
+  return res.json();
+}

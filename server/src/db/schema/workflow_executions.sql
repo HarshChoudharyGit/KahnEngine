@@ -1,7 +1,7 @@
 CREATE TABLE workflow_executions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   legacy_id text UNIQUE,
-  workflow_id uuid NOT NULL REFERENCES workflows(id) ON DELETE RESTRICT,
+  workflow_id uuid NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
   workflow_version integer NOT NULL,
   status varchar(20) NOT NULL DEFAULT 'queued',
   trigger_type varchar(50),

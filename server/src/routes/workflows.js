@@ -118,22 +118,16 @@ export async function workflowRoutes(fastify) {
 
   // Delete single workflow
   fastify.delete('/api/v1/workflows/:id', async (request, reply) => {
-    let deleted;
     try {
-      deleted = await deleteWorkflow(request.params.id);
-    } catch (err) {
-      if (err.code === '23503') {
-        return reply.code(409).send({
-          success: false,
-          error: 'Workflow has execution history and cannot be deleted.',
-        });
+      const deleted = await deleteWorkflow(request.params.id);
+      if (!deleted) {
+        return reply.code(404).send({ success: false, error: 'Workflow not found' });
       }
-      throw err;
+      return { success: true, message: 'Workflow deleted successfully' };
+    } catch (err) {
+      request.log.error({ err, workflowId: request.params.id }, 'Failed to delete workflow');
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to delete workflow' });
     }
-    if (!deleted) {
-      return reply.code(404).send({ success: false, error: 'Workflow not found' });
-    }
-    return { success: true, message: 'Workflow deleted successfully' };
   });
 
   // Validate and dispatch a manual workflow execution.
@@ -252,5 +246,53 @@ export async function workflowRoutes(fastify) {
       return reply.code(404).send({ success: false, error: 'Execution not found' });
     }
     return { success: true, execution };
+  });
+
+  // HTTP Test proxy to allow testing external endpoints from the frontend without browser CORS limitations
+  fastify.post('/api/v1/test-http', async (request, reply) => {
+    const { url, method = 'GET', headers = {}, body } = request.body || {};
+    if (!url || typeof url !== 'string') {
+      return reply.code(400).send({ success: false, error: 'URL is required' });
+    }
+
+    const startTime = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const response = await fetch(url, {
+        method: String(method).toUpperCase(),
+        headers,
+        body: ['POST', 'PUT', 'PATCH', 'DELETE'].includes(String(method).toUpperCase()) && body ? body : undefined,
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      const durationMs = Date.now() - startTime;
+      const text = await response.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text;
+      }
+
+      return reply.send({
+        success: true,
+        status: response.status,
+        statusText: response.statusText,
+        durationMs,
+        headers: Object.fromEntries(response.headers.entries()),
+        data: parsed,
+      });
+    } catch (err) {
+      clearTimeout(timeout);
+      const durationMs = Date.now() - startTime;
+      return reply.code(502).send({
+        success: false,
+        error: err.name === 'AbortError' ? 'Request timed out after 10s' : err.message,
+        durationMs,
+      });
+    }
   });
 }

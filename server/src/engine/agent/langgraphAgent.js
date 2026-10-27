@@ -77,6 +77,9 @@ export async function executeLangGraphAgent({ node, context, log, executionId })
         prompt: promptText,
         toolsUsed: toolNames,
         completion: outputText,
+        text: outputText,
+        output: outputText,
+        response: outputText,
         messagesCount: messages.length,
       };
     } catch (apiError) {
@@ -206,6 +209,9 @@ async function executeLocalReactGraph({ promptText, systemInstructions, tools, c
     toolsConfigured: tools.map((t) => t.name),
     toolExecutions: executedToolObservations,
     completion: finalAnswer,
+    text: finalAnswer,
+    output: finalAnswer,
+    response: finalAnswer,
     timestamp: new Date().toISOString(),
   };
 }
