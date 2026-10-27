@@ -1,15 +1,15 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import dotenv from 'dotenv';
 import { workflowRoutes } from './routes/workflows.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { telemetryRoutes } from './routes/telemetry.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { gmailRoutes } from './routes/gmail.js';
-import { scheduleRoutes } from './routes/schedules.js';
-import { startGitHubWatcher } from './services/githubWatcher.js';
-
-dotenv.config();
+import { startGitHubWatcher, stopGitHubWatcher } from './services/githubWatcher.js';
+import { closeDB, connectDB } from './db/db.js';
+import { runMigrations } from './db/migrate.js';
+import { initializeGitHubSession } from './engine/agent/octokitClient.js';
+import { initializeGmailSession } from './engine/agent/gmailClient.js';
 
 const port = Number(process.env.PORT) || 4000;
 const host = process.env.HOST || '0.0.0.0';
@@ -31,16 +31,41 @@ fastify.get('/health', async () => ({
 }));
 
 await fastify.register(workflowRoutes);
-await fastify.register(scheduleRoutes);
 await fastify.register(webhookRoutes);
 await fastify.register(telemetryRoutes);
 await fastify.register(integrationRoutes);
 await fastify.register(gmailRoutes);
 
+fastify.addHook('onClose', async () => {
+  stopGitHubWatcher();
+  await closeDB();
+});
+
+async function shutdown(signal) {
+  fastify.log.info({ signal }, 'Shutting down server');
+  try {
+    await fastify.close();
+  } catch (err) {
+    fastify.log.error({ err }, 'Server shutdown failed');
+    process.exitCode = 1;
+  }
+}
+
+process.once('SIGINT', () => void shutdown('SIGINT'));
+process.once('SIGTERM', () => void shutdown('SIGTERM'));
+
 try {
+  await connectDB();
+  await runMigrations();
+  await initializeGitHubSession();
+  await initializeGmailSession();
   await fastify.listen({ port, host });
   startGitHubWatcher(10000);
 } catch (err) {
-  fastify.log.error(err);
-  process.exit(1);
+  fastify.log.error({
+    message: err.message,
+    code: err.cause?.code || err.code || 'UNKNOWN',
+  }, 'Server startup failed');
+  await closeDB();
+  process.exitCode = 1;
 }

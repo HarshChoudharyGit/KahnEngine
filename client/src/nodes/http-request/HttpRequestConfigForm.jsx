@@ -3,12 +3,9 @@ import { Plus, Trash2 } from 'lucide-react'
 const inputClassName = 'mt-1.5 w-full rounded-md border border-[#8e7139]/35 bg-[#100d0a] px-3 py-2.5 text-sm text-[#f0e5c9] outline-none transition placeholder:text-[#756b5a] focus:border-[#c69b45]'
 const methodsWithBody = ['POST', 'PUT', 'PATCH']
 
-// Form component for configuring HTTP request parameters, headers, query params, and body
 function HttpRequestConfigForm({ value, errors, onChange }) {
-  // Updates a single field in the HTTP request configuration
   const setField = (key, nextValue) => onChange({ ...value, [key]: nextValue })
 
-  // Renders editable key-value input rows for headers and query parameters
   const renderKeyValueRows = (field, label) => (
     <div>
       <p className="mb-2 text-xs font-medium text-[#c9b991]">{label}</p>

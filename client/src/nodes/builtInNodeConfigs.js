@@ -1,4 +1,3 @@
-// Generates a standard configuration schema with required field validation
 const simpleRequiredConfig = (label, description, fields, requiredKeys) => ({
   label,
   description,
@@ -16,7 +15,6 @@ const simpleRequiredConfig = (label, description, fields, requiredKeys) => ({
   },
 })
 
-// Factory for external connector nodes requiring workspace integration credentials
 const connectorConfig = (label, description, fields, defaults = {}) => ({
   label,
   description,
@@ -68,7 +66,14 @@ const builtInNodeConfigs = {
     [
       { key: 'leftValue', label: 'Value to evaluate', type: 'text', placeholder: '{{trigger.body.priority}}', required: true },
       { key: 'operator', label: 'Operator', type: 'select', options: ['equals', 'notEquals', 'contains', 'greaterThan', 'lessThan', 'isEmpty'].map((value) => ({ value, label: value })) },
-      { key: 'rightValue', label: 'Compare against', type: 'text', placeholder: 'enterprise' },
+      {
+        key: 'rightValue',
+        label: 'Compare against',
+        type: 'text',
+        placeholder: 'enterprise',
+        required: true,
+        when: ({ form }) => ['greaterThan', 'lessThan'].includes(form.operator),
+      },
     ],
     ['leftValue'],
   ),

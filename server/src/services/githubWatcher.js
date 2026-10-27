@@ -1,5 +1,9 @@
 import { nanoid } from 'nanoid';
-import { memoryStore } from '../store/memoryStore.js';
+import {
+  createExecution,
+  getWorkflow,
+  listAllWorkflows,
+} from '../db/workflowRepository.js';
 import { getLatestCommit } from '../engine/agent/octokitClient.js';
 import { executeWorkflow } from '../engine/executor.js';
 
@@ -61,8 +65,8 @@ function getDefaultCanvasWorkflow() {
   };
 }
 
-function getWorkflowsToWatch() {
-  const list = memoryStore.listWorkflows();
+async function getWorkflowsToWatch() {
+  const list = await listAllWorkflows();
   if (list && list.length > 0) {
     const matched = list.filter((wf) => {
       const nodes = wf.nodes || [];
@@ -77,11 +81,14 @@ function getWorkflowsToWatch() {
   }
 
   const defaultWorkflow = getDefaultCanvasWorkflow();
-  memoryStore.saveWorkflow(defaultWorkflow);
+  if (await getWorkflow(defaultWorkflow.id)) {
+    defaultWorkflow.id = `wf_${nanoid(8)}`;
+  }
+  await saveWorkflow(defaultWorkflow);
   return [defaultWorkflow];
 }
 
-export function triggerCommitWorkflow(workflow, commitData) {
+export async function triggerCommitWorkflow(workflow, commitData) {
   const executionId = `exec_${nanoid(8)}`;
   const triggerPayload = {
     event: 'push',
@@ -96,15 +103,17 @@ export function triggerCommitWorkflow(workflow, commitData) {
     source: 'github-poller',
   };
 
-  memoryStore.createExecution({
+  const execution = {
     id: executionId,
     workflowId: workflow.id,
     workflowName: workflow.name,
     triggerPayload,
-  });
+  };
+  await createExecution(execution);
 
   setImmediate(() => {
-    executeWorkflow(workflow, executionId, triggerPayload);
+    void executeWorkflow(workflow, executionId, triggerPayload)
+      .catch((err) => console.error('GitHub-triggered workflow execution failed', { executionId, message: err.message }));
   });
 
   return { executionId, workflowId: workflow.id, commit: commitData.sha };
@@ -117,7 +126,7 @@ export async function pollGitHubOnce() {
   const triggeredExecutions = [];
 
   try {
-    const workflows = getWorkflowsToWatch();
+    const workflows = await getWorkflowsToWatch();
     for (const workflow of workflows) {
       const nodes = workflow.nodes || [];
       const githubNode = nodes.find(
@@ -145,18 +154,16 @@ export async function pollGitHubOnce() {
         continue;
       }
 
-      const prevSha = lastKnownCommits.get(key);
-      if (prevSha !== latest.sha) {
-        lastKnownCommits.set(key, latest.sha);
-        const result = triggerCommitWorkflow(workflow, {
+      const previousSha = lastKnownCommits.get(key);
+      if (previousSha !== latest.sha) {
+        const result = await triggerCommitWorkflow(workflow, {
           ...latest,
           branch,
         });
+        lastKnownCommits.set(key, latest.sha);
         triggeredExecutions.push(result);
       }
     }
-  } catch (err) {
-    console.error('Polling error:', err.message);
   } finally {
     isPolling = false;
   }
@@ -176,8 +183,10 @@ export async function pollGitHubOnce() {
 export function startGitHubWatcher(intervalMs = 10000) {
   pollIntervalMs = intervalMs;
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(pollGitHubOnce, pollIntervalMs);
-  void pollGitHubOnce();
+  pollTimer = setInterval(() => {
+    void pollGitHubOnce().catch((err) => console.error('GitHub polling failed', { message: err.message }));
+  }, pollIntervalMs);
+  void pollGitHubOnce().catch((err) => console.error('GitHub polling failed', { message: err.message }));
 }
 
 export function stopGitHubWatcher() {
@@ -187,8 +196,8 @@ export function stopGitHubWatcher() {
   }
 }
 
-export function simulateCommitPush({ repository, branch = 'main', message, author, htmlUrl } = {}) {
-  const workflows = getWorkflowsToWatch();
+export async function simulateCommitPush({ repository, branch = 'main', message, author, htmlUrl } = {}) {
+  const workflows = await getWorkflowsToWatch();
   const results = [];
   const fakeSha = nanoid(7);
   const targetRepo = repository || 'HarshChoudharyGit/KahnEngine';
@@ -204,7 +213,7 @@ export function simulateCommitPush({ repository, branch = 'main', message, autho
   };
 
   for (const workflow of workflows) {
-    const res = triggerCommitWorkflow(workflow, commitData);
+    const res = await triggerCommitWorkflow(workflow, commitData);
     results.push(res);
   }
 

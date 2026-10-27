@@ -4,8 +4,7 @@ import { AlertCircle, Check, Trash2, X } from 'lucide-react'
 import { getNodeConfigSchema } from '../nodes/nodeConfigRegistry.js'
 import NodeConfigForm from './NodeConfigForm.jsx'
 
-// Slide-out panel for inspecting and editing a selected node's configuration
-function NodeConfigPanel({ node, onClose, onDelete, onSave, onInvalidSave, workflowId }) {
+function NodeConfigPanel({ node, onClose, onDelete, onSave, onInvalidSave }) {
   const schema = getNodeConfigSchema(node.data.configType)
   const ConfigForm = schema.Form ?? NodeConfigForm
   const [draft, setDraft] = useState(() => ({
@@ -24,13 +23,10 @@ function NodeConfigPanel({ node, onClose, onDelete, onSave, onInvalidSave, workf
       ? { title: node.data.title, subtitle: node.data.subtitle }
       : {}),
     ...(node.data.configuration ?? {}),
-    _nodeId: node.id,
-    _workflowId: workflowId,
   }))
   const [errors, setErrors] = useState({})
   const reducedMotion = useReducedMotion()
 
-  // Closes the configuration sidebar when the Escape key is pressed
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') onClose()
@@ -39,7 +35,6 @@ function NodeConfigPanel({ node, onClose, onDelete, onSave, onInvalidSave, workf
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
-  // Validates form input against schema rules and saves valid configuration to workflow state
   const handleSave = (event) => {
     event.preventDefault()
     const validationErrors = schema.validate(draft)
@@ -48,8 +43,7 @@ function NodeConfigPanel({ node, onClose, onDelete, onSave, onInvalidSave, workf
       onInvalidSave(node.id)
       return
     }
-    const { _nodeId, _workflowId, ...cleanedDraft } = draft
-    onSave(node.id, cleanedDraft)
+    onSave(node.id, draft)
   }
 
   return (
@@ -138,7 +132,6 @@ function NodeConfigPanel({ node, onClose, onDelete, onSave, onInvalidSave, workf
   )
 }
 
-// AnimatePresence wrapper that mounts/unmounts NodeConfigPanel smoothly when a node is selected
 function NodeConfigSidebar({ node, ...props }) {
   return (
     <AnimatePresence>

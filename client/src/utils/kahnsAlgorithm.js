@@ -4,7 +4,6 @@
  * Space Complexity: O(V + E)
  */
 
-// Validates directed graph acyclicity and returns nodes in topological execution order
 export function runKahnsAlgorithm(nodes = [], edges = []) {
   if (!nodes || nodes.length === 0) {
     return {

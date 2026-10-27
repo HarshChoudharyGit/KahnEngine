@@ -7,7 +7,6 @@ const categories = [
   { id: 'core', label: 'Core nodes', matches: (option) => option.category !== 'ACTION' },
 ]
 
-// Modal search panel for browsing, selecting, and dragging workflow nodes onto the canvas
 function NodePicker({ onSelect, onClose, onDragStart }) {
   const [query, setQuery] = useState('')
   const searchRef = useRef(null)

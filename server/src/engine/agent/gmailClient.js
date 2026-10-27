@@ -1,13 +1,17 @@
-import fs from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { google } from 'googleapis';
+import {
+  disconnectIntegrationSession,
+  getIntegrationSession,
+  saveIntegrationSession,
+} from '../../db/integrationSessionRepository.js';
+import { upsertIntegrationConnection } from '../../db/workflowRepository.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSION_FILE = path.resolve(__dirname, '../../../.gmail_session.json');
-export function getRedirectUri() {
-  return process.env.GOOGLE_REDIRECT_URI?.trim() || 'http://localhost:4000/api/v1/gmail/callback';
-}
+const REDIRECT_URI = 'http://localhost:4000/api/v1/gmail/callback';
 
 const SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
@@ -20,21 +24,31 @@ const SCOPES = [
 // ---------------------------------------------------------------------------
 // Session state
 // ---------------------------------------------------------------------------
-function loadSavedSession() {
-  try {
-    if (fs.existsSync(SESSION_FILE)) {
-      const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf-8'));
-      if (data.tokens) return data;
-    }
-  } catch {
-    // Ignore
-  }
-  return null;
-}
+let oauthTokens = null;
+let activeGmailUser = null;
 
-const initialSession = loadSavedSession();
-let oauthTokens = initialSession?.tokens || null;
-let activeGmailUser = initialSession?.user || null;
+export async function initializeGmailSession() {
+  let session = await getIntegrationSession('gmail');
+  if (!session) {
+    try {
+      const data = JSON.parse(await readFile(SESSION_FILE, 'utf8'));
+      if (data.tokens) {
+        await saveIntegrationSession('gmail', data.tokens, data.user || {});
+        session = { payload: data.tokens, user: data.user || {} };
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        if (err.message.includes('SESSION_ENCRYPTION_KEY')) throw err;
+        throw new Error('Could not import the existing Gmail session file', { cause: err });
+      }
+    }
+  }
+  if (session?.payload) {
+    oauthTokens = session.payload;
+    activeGmailUser = session.user;
+    await upsertIntegrationConnection('gmail', activeGmailUser?.email, 'connected', SCOPES);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // OAuth2 client helper
@@ -44,7 +58,7 @@ function createOAuth2Client() {
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
   if (!clientId || !clientSecret) return null;
 
-  return new google.auth.OAuth2(clientId, clientSecret, getRedirectUri());
+  return new google.auth.OAuth2(clientId, clientSecret, REDIRECT_URI);
 }
 
 function getAuthenticatedClient() {
@@ -83,41 +97,31 @@ export async function exchangeCode(code) {
   const oauth2 = google.oauth2({ version: 'v2', auth: client });
   const { data: userInfo } = await oauth2.userinfo.get();
 
-  oauthTokens = tokens;
-  activeGmailUser = {
+  const user = {
     email: userInfo.email,
     name: userInfo.name,
     picture: userInfo.picture,
   };
 
-  // Persist session
-  try {
-    fs.writeFileSync(
-      SESSION_FILE,
-      JSON.stringify({ tokens, user: activeGmailUser }, null, 2),
-      'utf-8',
-    );
-  } catch (err) {
-    console.warn('Could not persist Gmail session:', err.message);
-  }
+  await saveIntegrationSession('gmail', tokens, user);
+  await upsertIntegrationConnection('gmail', user.email, 'connected', SCOPES);
+  oauthTokens = tokens;
+  activeGmailUser = user;
 
-  return { user: activeGmailUser, tokens };
+  return { user, tokens };
 }
 
 /** Clear the active Gmail session */
-export function clearGmailSession() {
+export async function clearGmailSession() {
+  await disconnectIntegrationSession('gmail');
+  await upsertIntegrationConnection('gmail', activeGmailUser?.email, 'disconnected');
   oauthTokens = null;
   activeGmailUser = null;
-  try {
-    if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
-  } catch {
-    // Ignore
-  }
 }
 
 /** Check if Gmail is connected */
 export function isGmailConnected() {
-  return Boolean(oauthTokens && getAuthenticatedClient());
+  return Boolean(oauthTokens);
 }
 
 /** Get the active Gmail user info */

@@ -86,7 +86,6 @@ const gmailActionConfig = {
     },
   ],
 
-  // Validates required email parameters based on selected operation
   validate: (form) => {
     const errors = {};
 

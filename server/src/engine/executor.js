@@ -1,4 +1,12 @@
 import { memoryStore } from '../store/memoryStore.js';
+import {
+  appendLog,
+  finishNodeExecution,
+  sanitizeLogEntry,
+  startExecution,
+  startNodeExecution,
+  updateExecution,
+} from '../db/workflowRepository.js';
 import { runKahnsAlgorithm } from './kahnsAlgorithm.js';
 import { executeLangGraphAgent } from './agent/langgraphAgent.js';
 import { getLatestCommit } from './agent/octokitClient.js';
@@ -23,7 +31,7 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
   const kahnResult = runKahnsAlgorithm(nodes, edges);
   if (!kahnResult.isValid) {
     const errorMsg = kahnResult.error || 'Cycle detected in graph';
-    memoryStore.updateExecution(executionId, {
+    await updateExecution(executionId, {
       status: 'FAILED',
       error: errorMsg,
       completedAt: new Date().toISOString(),
@@ -38,24 +46,18 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
   }
 
   // Mark execution as RUNNING
-  memoryStore.updateExecution(executionId, { status: 'RUNNING' });
-  memoryStore.broadcastTelemetry(executionId, 'execution_started', {
-    executionId,
-    workflowId: workflow.id,
-    topologicalOrder: kahnResult.topologicalOrder.map((n) => n.id),
-  });
-
   // Node context storage (passing outputs between nodes)
   const context = {
     trigger: triggerPayload,
     outputs: {},
   };
 
-  const initialStatuses = {};
-  for (const node of nodes) {
-    initialStatuses[node.id] = 'PENDING';
-  }
-  memoryStore.updateExecution(executionId, { nodeStatuses: initialStatuses });
+  await startExecution(executionId, nodes);
+  memoryStore.broadcastTelemetry(executionId, 'execution_started', {
+    executionId,
+    workflowId: workflow.id,
+    topologicalOrder: kahnResult.topologicalOrder.map((n) => n.id),
+  });
 
   // 2. Execute nodes sequentially in topological order
   for (let i = 0; i < kahnResult.topologicalOrder.length; i++) {
@@ -65,10 +67,17 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
     const nodeType = (node.data?.configType || node.data?.type || node.type || 'default').toLowerCase();
     const nodeStartMs = Date.now();
 
-    // Broadcast node RUNNING
-    memoryStore.updateExecution(executionId, {
-      nodeStatuses: { [nodeId]: 'RUNNING' },
+    await startNodeExecution(executionId, {
+      nodeId,
+      nodeType,
+      input: {
+        nodeTitle: nodeLabel,
+        trigger: context.trigger,
+        outputs: context.outputs,
+      },
     });
+
+    // Broadcast node RUNNING
     memoryStore.broadcastTelemetry(executionId, 'node_status', {
       nodeId,
       status: 'RUNNING',
@@ -77,30 +86,34 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
       timestamp: Date.now(),
     });
 
+    let logQueue = Promise.resolve();
+    let logPersistenceError = null;
     const log = (message, level = 'INFO') => {
-      const entry = { nodeId, nodeTitle: nodeLabel, level, message, timestamp: Date.now() };
-      memoryStore.appendLog(executionId, entry);
+      const entry = sanitizeLogEntry({ nodeId, nodeTitle: nodeLabel, level, message, timestamp: Date.now() });
+      logQueue = logQueue
+        .then(() => appendLog(executionId, entry))
+        .catch((err) => {
+          logPersistenceError ||= err;
+        });
       memoryStore.broadcastTelemetry(executionId, 'node_log', entry);
+      return logQueue;
     };
 
     log(`[Step ${i + 1}/${kahnResult.topologicalOrder.length}] Starting: "${nodeLabel}" (${nodeType})`);
 
     try {
       const result = await executeSingleNode(node, context, log);
+      await logQueue;
+      if (logPersistenceError) {
+        throw new Error('Could not persist workflow execution log', { cause: logPersistenceError });
+      }
       const durationMs = Date.now() - nodeStartMs;
       context.outputs[nodeId] = result;
 
       // Broadcast node SUCCESS
-      memoryStore.updateExecution(executionId, {
-        nodeStatuses: { [nodeId]: 'SUCCESS' },
-      });
-      memoryStore.appendStep(executionId, {
+      await finishNodeExecution(executionId, {
         nodeId,
-        title: nodeLabel,
-        category: node.data?.category || 'ACTION',
-        status: 'SUCCESS',
-        completedAt: new Date().toISOString(),
-        durationMs,
+        status: 'completed',
         output: result,
       });
 
@@ -111,26 +124,27 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
         timestamp: Date.now(),
       });
       log(`Node "${nodeLabel}" completed successfully in ${durationMs}ms.`);
+      await logQueue;
+      if (logPersistenceError) {
+        throw new Error('Could not persist workflow execution log', { cause: logPersistenceError });
+      }
     } catch (err) {
+      await logQueue;
       const durationMs = Date.now() - nodeStartMs;
       const totalDurationMs = Date.now() - executionStartMs;
 
       // Broadcast node FAILED
-      memoryStore.updateExecution(executionId, {
-        nodeStatuses: { [nodeId]: 'FAILED' },
+      await finishNodeExecution(executionId, {
+        nodeId,
+        status: 'failed',
+        output: null,
+        error: err.message,
+      });
+      await updateExecution(executionId, {
         status: 'FAILED',
         error: err.message,
         completedAt: new Date().toISOString(),
         durationMs: totalDurationMs,
-      });
-      memoryStore.appendStep(executionId, {
-        nodeId,
-        title: nodeLabel,
-        category: node.data?.category || 'ACTION',
-        status: 'FAILED',
-        error: err.message,
-        completedAt: new Date().toISOString(),
-        durationMs,
       });
 
       memoryStore.broadcastTelemetry(executionId, 'node_status', {
@@ -141,6 +155,10 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
         timestamp: Date.now(),
       });
       log(`Node "${nodeLabel}" failed: ${err.message}`, 'ERROR');
+      await logQueue;
+      if (logPersistenceError) {
+        throw new Error('Could not persist workflow execution log', { cause: logPersistenceError });
+      }
 
       memoryStore.broadcastTelemetry(executionId, 'execution_failed', {
         executionId,
@@ -154,7 +172,7 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
 
   // All nodes succeeded
   const totalDurationMs = Date.now() - executionStartMs;
-  memoryStore.updateExecution(executionId, {
+  await updateExecution(executionId, {
     status: 'SUCCESS',
     completedAt: new Date().toISOString(),
     durationMs: totalDurationMs,
@@ -181,24 +199,11 @@ async function executeSingleNode(node, context, log) {
       return { received: context.trigger, path };
     }
 
-    case 'schedule':
-    case 'scheduletrigger':
     case 'crontrigger':
     case 'cron': {
-      const schedule = config.cronExpression || config.schedule || '0 9 * * 1-5';
-      const timezone = config.timezone || 'Asia/Kolkata';
-      const scheduledAt = context.trigger?.scheduledAt || new Date().toISOString();
-      const summary = config.summary || context.trigger?.summary || `Scheduled run on ${schedule}`;
-      log(`Schedule trigger evaluated: "${schedule}" (${timezone})`);
-      return {
-        triggeredAt: scheduledAt,
-        scheduledAt,
-        cronExpression: schedule,
-        schedule,
-        timezone,
-        summary,
-        triggerType: context.trigger?.triggerType || 'schedule',
-      };
+      const schedule = config.schedule || '0 9 * * 1-5';
+      log(`Cron trigger evaluated on schedule: ${schedule}`);
+      return { triggeredAt: new Date().toISOString(), schedule };
     }
 
     case 'wait':
@@ -247,6 +252,12 @@ async function executeSingleNode(node, context, log) {
         }
       } else if (config.headers && typeof config.headers === 'object') {
         Object.assign(headers, config.headers);
+      }
+
+      if (config.authentication === 'bearer') {
+        headers.Authorization = `Bearer ${config.bearerToken}`;
+      } else if (config.authentication === 'apiKey') {
+        headers[config.apiKeyName] = config.apiKeyValue;
       }
 
       if (Array.isArray(config.queryParams) && config.queryParams.length > 0) {
@@ -455,8 +466,6 @@ async function executeSingleNode(node, context, log) {
                 subject = `[${context.trigger.repository}] Push commit ${context.trigger.commit} by ${context.trigger.author}`;
               } else if (context.trigger?.subject) {
                 subject = `Re: ${context.trigger.subject}`;
-              } else if (context.trigger?.triggerType === 'schedule') {
-                subject = `[Schedule Trigger] Automated Run (${context.trigger.cronExpression || 'Recurring'})`;
               } else {
                 subject = 'Kahn Engine Notification';
               }
@@ -475,34 +484,15 @@ async function executeSingleNode(node, context, log) {
                   `Dispatched automatically by Kahn Engine workflow.`;
               } else if (context.trigger?.snippet) {
                 body = `Response to: ${context.trigger.snippet}`;
-              } else if (context.trigger?.triggerType === 'schedule') {
-                body = `Automated scheduled execution triggered at ${context.trigger.scheduledAt || new Date().toISOString()} (Cron: ${context.trigger.cronExpression || 'N/A'}, Timezone: ${context.trigger.timezone || 'Asia/Kolkata'}).\n\nDispatched automatically by Dormammu Loop.`;
               } else {
                 body = 'Automated workflow notification from Kahn Engine.';
               }
             }
 
             log(`Sending email to <${to}>: "${subject}"`);
-            let result;
-            try {
-              result = await sendEmail({ to, subject, body, cc: config.cc, bcc: config.bcc });
-              log(`Email sent successfully. Message ID: ${result.messageId}`);
-              return { ...result, operation: 'send_email', recipient: to, subject };
-            } catch (err) {
-              if (err.message?.includes('Gmail API has not been used') || err.message?.includes('is disabled')) {
-                log(`Google Cloud Note: Gmail API is disabled in project. Enable at: https://console.developers.google.com/apis/api/gmail.googleapis.com/overview for live email delivery.`, 'WARN');
-                log(`Pipeline fallback: Simulated email successfully delivered to <${to}> with subject "${subject}".`, 'INFO');
-                return {
-                  sent: true,
-                  simulated: true,
-                  recipient: to,
-                  subject,
-                  messageId: `sim_${Date.now()}`,
-                  note: 'Simulated fallback because Gmail API is disabled in Google Cloud project.',
-                };
-              }
-              throw err;
-            }
+            const result = await sendEmail({ to, subject, body, cc: config.cc, bcc: config.bcc });
+            log(`Email sent successfully. Message ID: ${result.messageId}`);
+            return { ...result, operation: 'send_email', recipient: to, subject };
           }
 
           case 'reply_email': {
@@ -546,19 +536,14 @@ async function executeSingleNode(node, context, log) {
           }
         }
       } catch (err) {
-        if (err.message?.includes('Gmail API has not been used') || err.message?.includes('is disabled')) {
-          const match = err.message.match(/project[ =](\d+)/i) || err.message.match(/https:\/\/[^\s]+/i);
-          const link = match ? match[0] : 'https://console.developers.google.com/apis/api/gmail.googleapis.com/overview';
-          log(`Gmail API is not enabled in your Google Cloud project. Enable it at: ${link}`, 'WARN');
-        }
         log(`Gmail operation "${operation}" failed: ${err.message}`, 'ERROR');
         throw err;
       }
     }
 
     case 'discord': {
-      const channel = config.channel || 'alerts';
-      const message = config.content || 'Workflow notification executed successfully.';
+      const channel = config.channelId || config.channel || 'alerts';
+      const message = config.message || config.content || 'Workflow notification executed successfully.';
       log(`Discord webhook dispatched to channel #${channel}: "${message}"`);
       return { delivered: true, channel, message };
     }
@@ -582,6 +567,8 @@ async function executeSingleNode(node, context, log) {
       if (op === 'equals') outcome = String(left) === String(right);
       else if (op === 'notEquals') outcome = String(left) !== String(right);
       else if (op === 'contains') outcome = String(left).includes(String(right));
+      else if (op === 'greaterThan') outcome = Number(left) > Number(right);
+      else if (op === 'lessThan') outcome = Number(left) < Number(right);
       else if (op === 'isEmpty') outcome = !left;
       log(`Condition [${left} ${op} ${right}] evaluated to ${outcome ? 'TRUE' : 'FALSE'}`);
       return { result: outcome, branch: outcome ? 'true' : 'false' };

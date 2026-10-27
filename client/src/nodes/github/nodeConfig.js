@@ -72,7 +72,6 @@ const githubTriggerConfig = {
       when: ({ form }) => form.events.includes('pull_request'),
     },
   ],
-  // Validates that repository selection and event types are provided
   validate: (form) => {
     const errors = {}
     if (!form.repository) errors.repository = 'Choose a repository.'

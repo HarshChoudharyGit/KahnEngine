@@ -15,7 +15,6 @@ import {
   XCircle,
 } from 'lucide-react'
 
-// Formats ISO timestamps into human-readable locale date and time strings
 function formatTimestamp(timestamp) {
   if (!timestamp) return 'Just now'
   const date = new Date(timestamp)
@@ -27,7 +26,6 @@ function formatTimestamp(timestamp) {
   }).format(date)
 }
 
-// Formats execution duration from milliseconds into human-readable seconds or ms
 function formatDuration(durationMs, status) {
   if (durationMs == null) {
     return status === 'running' ? 'In progress…' : 'Pending'
@@ -36,7 +34,6 @@ function formatDuration(durationMs, status) {
   return `${(durationMs / 1000).toFixed(2)} s`
 }
 
-// Main component that displays workflow execution history, node step details, and live telemetry logs
 function ExecutionHistory({
   executions,
   selectedExecutionId,
@@ -60,12 +57,10 @@ function ExecutionHistory({
     }
   }, [selectedExecution?.logs?.length, selectedExecution?.status])
 
-  // Toggles expanded details (node outputs) for a specific execution step
   const toggleStepExpanded = (nodeId) => {
     setExpandedSteps((prev) => ({ ...prev, [nodeId]: !prev[nodeId] }))
   }
 
-  // Copies the complete formatted log stream to the clipboard
   const copyExecutionLogs = () => {
     if (!selectedExecution?.logs) return
     const text = selectedExecution.logs

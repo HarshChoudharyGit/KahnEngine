@@ -36,11 +36,11 @@ import {
   connectTelemetryStream,
   clearExecutionsApi,
   executeWorkflow,
-  getExecution,
   listExecutions,
   saveWorkflow,
 } from '../services/api.js'
 import { runKahnsAlgorithm } from '../utils/kahnsAlgorithm.js'
+import { validateNodeConfigurations } from '../utils/nodeConfigurationValidation.js'
 import ExecutionHistory from './ExecutionHistory.jsx'
 import NodePicker from './NodePicker.jsx'
 import NodeConfigSidebar from './NodeConfigSidebar.jsx'
@@ -48,7 +48,6 @@ import NodeConfigSidebar from './NodeConfigSidebar.jsx'
 const edgeStyle = { stroke: '#a68b5a', strokeWidth: 1.8 }
 const NODE_DRAG_DATA_TYPE = 'application/dormammu-node'
 
-// Custom React Flow node component displaying node title, category, status icon, and connectors
 function WorkflowNode({ id, data, selected }) {
   const NodeIcon = data.icon ?? Sparkles
   const status = data.status ?? 'idle'
@@ -121,7 +120,6 @@ function WorkflowNode({ id, data, selected }) {
   )
 }
 
-// Hydrates raw workflow nodes with category icons, accents, and initial status
 function hydrateWorkflowNodes(nodes) {
   if (!Array.isArray(nodes) || nodes.length === 0) return initialNodes
   return nodes.map((node) => {
@@ -142,7 +140,6 @@ function hydrateWorkflowNodes(nodes) {
   })
 }
 
-// Normalizes edge connections with styling and smoothstep routing
 function hydrateWorkflowEdges(edges) {
   if (!Array.isArray(edges)) return initialEdges
   return edges.map((edge) => ({
@@ -155,7 +152,6 @@ function hydrateWorkflowEdges(edges) {
 
 const nodeTypes = { workflow: WorkflowNode }
 
-// Core canvas editor managing nodes, connections, Kahn's algorithm cycle detection, and execution streaming
 function WorkflowEditor({
   activeTab,
   selectedTemplate,
@@ -172,14 +168,14 @@ function WorkflowEditor({
   const initialCanvasNodes = templateWorkflow
     ? templateWorkflow.nodes
     : loadedWorkflow
-      ? hydrateWorkflowNodes(loadedWorkflow.nodes)
-      : initialNodes
+    ? hydrateWorkflowNodes(loadedWorkflow.nodes)
+    : initialNodes
 
   const initialCanvasEdges = templateWorkflow
     ? templateWorkflow.edges
     : loadedWorkflow
-      ? hydrateWorkflowEdges(loadedWorkflow.edges)
-      : initialEdges
+    ? hydrateWorkflowEdges(loadedWorkflow.edges)
+    : initialEdges
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialCanvasNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialCanvasEdges)
@@ -187,22 +183,21 @@ function WorkflowEditor({
   const [contextMenu, setContextMenu] = useState(null)
   const [selectedNodeId, setSelectedNodeId] = useState(null)
   const [executionStatus, setExecutionStatus] = useState('idle') // 'idle' | 'running' | 'complete' | 'failed'
-  const [cycleWarning, setCycleWarning] = useState('')
+  const [workflowNotice, setWorkflowNotice] = useState(null)
   const [executions, setExecutions] = useState([])
   const [selectedExecutionId, setSelectedExecutionId] = useState(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [activeTelemetryStats, setActiveTelemetryStats] = useState(null)
 
-  const [currentWorkflowId, setCurrentWorkflowId] = useState(
-    () => loadedWorkflow?.id || (templateWorkflow ? `wf_${templateWorkflow.id}` : `wf_${Date.now()}`),
+  const workflowIdRef = useRef(
+    loadedWorkflow?.id || (templateWorkflow ? `wf_${templateWorkflow.id}` : `wf_${Date.now()}`),
   )
-  const workflowIdRef = useRef(currentWorkflowId)
   const nextNodeId = useRef(initialCanvasNodes.length + 10)
   const activeStreamCloseRef = useRef(null)
   const { screenToFlowPosition, fitView } = useReactFlow()
   const selectedNode = nodes.find((node) => node.id === selectedNodeId)
 
-  // Persists current workflow nodes, edges, and configuration to the Fastify backend
+  // Save workflow handler
   const handleSave = useCallback(async () => {
     try {
       setIsSaving?.(true)
@@ -229,7 +224,6 @@ function WorkflowEditor({
       })
       if (saved?.workflow?.id) {
         workflowIdRef.current = saved.workflow.id
-        setCurrentWorkflowId(saved.workflow.id)
       }
       setSaveStatus?.('saved')
     } catch (err) {
@@ -247,7 +241,7 @@ function WorkflowEditor({
     }
   }, [saveActionRef, handleSave])
 
-  // Fetches latest execution records from the backend
+  // Refresh server executions
   const refreshHistory = useCallback(async () => {
     setIsRefreshing(true)
     try {
@@ -282,7 +276,6 @@ function WorkflowEditor({
     }
   }, [activeTab, refreshHistory])
 
-  // Opens right-click context menu for nodes or edges
   const openContextMenu = (event, item, type) => {
     event.preventDefault()
     const bounds = event.currentTarget.closest('main').getBoundingClientRect()
@@ -294,7 +287,6 @@ function WorkflowEditor({
     })
   }
 
-  // Deletes the active item (node or edge) targeted by the context menu
   const deleteContextItem = () => {
     if (!contextMenu) return
 
@@ -312,7 +304,6 @@ function WorkflowEditor({
     setSaveStatus?.('unsaved')
   }
 
-  // Instantiates and adds a new workflow node at the specified canvas coordinates
   const addNode = (option, position) => {
     const id = `node-${nextNodeId.current++}`
     setNodes((currentNodes) => [
@@ -328,7 +319,6 @@ function WorkflowEditor({
     setSaveStatus?.('unsaved')
   }
 
-  // Handles drop events when dragging a node from the palette onto the canvas
   const handleDrop = (event) => {
     event.preventDefault()
     const title = event.dataTransfer.getData(NODE_DRAG_DATA_TYPE)
@@ -339,13 +329,11 @@ function WorkflowEditor({
     setPickerOpen(false)
   }
 
-  // Initializes drag data transfer when dragging a node item
   const handleNodeDragStart = (event, title) => {
     event.dataTransfer.setData(NODE_DRAG_DATA_TYPE, title)
     event.dataTransfer.effectAllowed = 'copy'
   }
 
-  // Adds a node to the canvas center when clicked from the node picker palette
   const handlePaletteClick = (option) => {
     addNode(option, screenToFlowPosition({
       x: window.innerWidth * 0.58,
@@ -354,7 +342,7 @@ function WorkflowEditor({
     setPickerOpen(false)
   }
 
-  // Handles edge connections between nodes and prevents execution cycles using Kahn's algorithm
+  // Edge connection with client-side Kahn's Algorithm cycle prevention
   const handleConnect = (connection) => {
     // 1. Create candidate edge set
     const candidateEdge = {
@@ -369,26 +357,56 @@ function WorkflowEditor({
     // 2. Run Kahn's Algorithm validation
     const kahnResult = runKahnsAlgorithm(nodes, candidateEdges)
     if (!kahnResult.isValid) {
-      setCycleWarning(
-        `Cycle rejected by Kahn's Algorithm! Adding connection "${connection.source}" → "${connection.target}" creates an infinite execution cycle (${kahnResult.cycleNodes?.join(' ⇄ ')}).`,
-      )
+      const sourceTitle = nodes.find((node) => node.id === connection.source)?.data?.title ?? connection.source
+      const targetTitle = nodes.find((node) => node.id === connection.target)?.data?.title ?? connection.target
+      setWorkflowNotice({
+        type: 'cycle',
+        title: 'Connection would create a cycle',
+        message: `The connection from “${sourceTitle}” to “${targetTitle}” was not added because it would make the workflow loop back on itself.`,
+      })
       return
     }
 
-    setCycleWarning('')
+    setWorkflowNotice(null)
     setEdges((currentEdges) => addEdge(candidateEdge, currentEdges))
     setSaveStatus?.('unsaved')
   }
 
-  // Dispatches workflow execution to the backend and streams live SSE telemetry events
+  // Real Run Dispatch with SSE Telemetry Streaming
   const handleRun = async () => {
     if (executionStatus === 'running' || nodes.length === 0) return
-    setCycleWarning('')
+    setWorkflowNotice(null)
 
-    // Client-side Kahn's Algorithm DAG check
     const validation = runKahnsAlgorithm(nodes, edges)
     if (!validation.isValid) {
-      setCycleWarning(`Cannot execute workflow: ${validation.error}`)
+      const cycleNodeTitles = validation.cycleNodes
+        .map((nodeId) => nodes.find((node) => node.id === nodeId)?.data?.title ?? nodeId)
+      setWorkflowNotice({
+        type: 'cycle',
+        title: 'Workflow contains a cycle',
+        message: `A loop was found involving ${cycleNodeTitles.join(', ')}. Remove or reconnect an edge before running the workflow.`,
+      })
+      return
+    }
+
+    const configurationErrors = validateNodeConfigurations(nodes)
+    if (configurationErrors.length > 0) {
+      setNodes((currentNodes) =>
+        currentNodes.map((node) => ({
+          ...node,
+          data: {
+            ...node.data,
+            configurationStatus: configurationErrors.some((error) => error.nodeId === node.id)
+              ? 'error'
+              : node.data.configurationStatus,
+          },
+        })),
+      )
+      setWorkflowNotice({
+        type: 'validation',
+        title: 'Fix these settings before running',
+        issues: configurationErrors,
+      })
       return
     }
 
@@ -414,10 +432,11 @@ function WorkflowEditor({
           accent: n.data?.accent,
           configType: n.data?.configType,
           configuration: n.data?.configuration,
+          configurationStatus: n.data?.configurationStatus,
         },
       }))
 
-      // Dispatch to Fastify gateway (<10ms acknowledgment)
+      // Dispatch the validated workflow to the Fastify gateway.
       const dispatchResult = await executeWorkflow(workflowIdRef.current, {
         name: workflowTitle,
         nodes: sanitizedNodes,
@@ -462,19 +481,19 @@ function WorkflowEditor({
             currentNodes.map((n) =>
               n.id === nodeId
                 ? {
-                  ...n,
-                  data: {
-                    ...n.data,
-                    status:
-                      status === 'RUNNING'
-                        ? 'running'
-                        : status === 'SUCCESS'
+                    ...n,
+                    data: {
+                      ...n.data,
+                      status:
+                        status === 'RUNNING'
+                          ? 'running'
+                          : status === 'SUCCESS'
                           ? 'success'
                           : status === 'FAILED'
-                            ? 'error'
-                            : 'idle',
-                  },
-                }
+                          ? 'error'
+                          : 'idle',
+                    },
+                  }
                 : n,
             ),
           )
@@ -529,11 +548,11 @@ function WorkflowEditor({
             prev.map((item) =>
               item.id === executionId
                 ? {
-                  ...item,
-                  status: 'complete',
-                  finishedAt: new Date().toISOString(),
-                  durationMs: durationMs ?? (item.durationMs || 0),
-                }
+                    ...item,
+                    status: 'complete',
+                    finishedAt: new Date().toISOString(),
+                    durationMs: durationMs ?? (item.durationMs || 0),
+                  }
                 : item,
             ),
           )
@@ -541,98 +560,69 @@ function WorkflowEditor({
         onFailed: ({ error, durationMs }) => {
           setExecutionStatus('failed')
           setActiveTelemetryStats(null)
+          setWorkflowNotice({
+            type: 'error',
+            title: 'Workflow run failed',
+            message: error || 'The workflow stopped before it could complete.',
+          })
           setExecutions((prev) =>
             prev.map((item) =>
               item.id === executionId
                 ? {
-                  ...item,
-                  status: 'failed',
-                  error,
-                  finishedAt: new Date().toISOString(),
-                  durationMs: durationMs ?? (item.durationMs || 0),
-                }
+                    ...item,
+                    status: 'failed',
+                    error,
+                    finishedAt: new Date().toISOString(),
+                    durationMs: durationMs ?? (item.durationMs || 0),
+                  }
                 : item,
             ),
           )
         },
-        onError: async () => {
-          try {
-            const exec = await getExecution(executionId)
-            if (exec && (exec.status === 'SUCCESS' || exec.status === 'FAILED')) {
-              setExecutionStatus(exec.status === 'SUCCESS' ? 'complete' : 'failed')
-              setActiveTelemetryStats(null)
-              if (exec.nodeStatuses) {
-                setNodes((currentNodes) =>
-                  currentNodes.map((n) =>
-                    exec.nodeStatuses[n.id]
-                      ? {
-                        ...n,
-                        data: {
-                          ...n.data,
-                          status:
-                            exec.nodeStatuses[n.id] === 'SUCCESS'
-                              ? 'success'
-                              : exec.nodeStatuses[n.id] === 'FAILED'
-                                ? 'error'
-                                : 'idle',
-                        },
-                      }
-                      : n,
-                  ),
-                )
-              }
-            }
-          } catch {
-            // ignore
-          }
+        onError: () => {
+          // SSE stream closed
         },
       })
 
-      // Safety timeout: Reconcile status after 2 seconds to ensure button never stays permanently stuck
-      const safetyTimer = setTimeout(async () => {
-        try {
-          const exec = await getExecution(executionId)
-          if (exec && (exec.status === 'SUCCESS' || exec.status === 'FAILED')) {
-            setExecutionStatus(exec.status === 'SUCCESS' ? 'complete' : 'failed')
-            setActiveTelemetryStats(null)
-            if (exec.nodeStatuses) {
-              setNodes((currentNodes) =>
-                currentNodes.map((n) =>
-                  exec.nodeStatuses[n.id]
-                    ? {
-                      ...n,
-                      data: {
-                        ...n.data,
-                        status:
-                          exec.nodeStatuses[n.id] === 'SUCCESS'
-                            ? 'success'
-                            : exec.nodeStatuses[n.id] === 'FAILED'
-                              ? 'error'
-                              : 'idle',
-                      },
-                    }
-                    : n,
-                ),
-              )
-            }
-          }
-        } catch {
-          // ignore
-        }
-      }, 2000)
-
-      activeStreamCloseRef.current = () => {
-        clearTimeout(safetyTimer)
-        closeStream()
-      }
+      activeStreamCloseRef.current = closeStream
     } catch (err) {
       console.error('Execution dispatch failed:', err)
       setExecutionStatus('failed')
-      setCycleWarning(`Fastify gateway execution failed: ${err.message}`)
+      if (Array.isArray(err.nodeErrors) && err.nodeErrors.length > 0) {
+        setNodes((currentNodes) =>
+          currentNodes.map((node) => ({
+            ...node,
+            data: {
+              ...node.data,
+              configurationStatus: err.nodeErrors.some((issue) => issue.nodeId === node.id)
+                ? 'error'
+                : node.data.configurationStatus,
+            },
+          })),
+        )
+        setWorkflowNotice({
+          type: 'validation',
+          title: 'Fix these settings before running',
+          issues: err.nodeErrors,
+        })
+      } else if (Array.isArray(err.cycleNodes) && err.cycleNodes.length > 0) {
+        const cycleNodeTitles = err.cycleNodes
+          .map((nodeId) => nodes.find((node) => node.id === nodeId)?.data?.title ?? nodeId)
+        setWorkflowNotice({
+          type: 'cycle',
+          title: 'Workflow contains a cycle',
+          message: `A loop was found involving ${cycleNodeTitles.join(', ')}. Remove or reconnect an edge before running the workflow.`,
+        })
+      } else {
+        setWorkflowNotice({
+          type: 'error',
+          title: 'Workflow could not start',
+          message: err.message || 'The workflow could not be sent for execution. Please try again.',
+        })
+      }
     }
   }
 
-  // Clears all nodes and edges from the visual canvas
   const clearWorkflow = () => {
     if (executionStatus === 'running') return
     setNodes([])
@@ -642,7 +632,6 @@ function WorkflowEditor({
     setSaveStatus?.('unsaved')
   }
 
-  // Clears all past execution records on the server and local state
   const clearHistory = async () => {
     if (executionStatus === 'running') return
     try {
@@ -654,28 +643,26 @@ function WorkflowEditor({
     setSelectedExecutionId(null)
   }
 
-  // Updates node configuration data and marks it as configured
   const saveNodeConfiguration = (nodeId, configuration) => {
     setNodes((currentNodes) => currentNodes.map((node) => (
       node.id === nodeId
         ? {
-          ...node,
-          data: {
-            ...node.data,
-            ...(!node.data.configType
-              ? { title: configuration.title, subtitle: configuration.subtitle }
-              : {}),
-            configuration,
-            configurationStatus: 'configured',
-          },
-        }
+            ...node,
+            data: {
+              ...node.data,
+              ...(!node.data.configType
+                ? { title: configuration.title, subtitle: configuration.subtitle }
+                : {}),
+              configuration,
+              configurationStatus: 'configured',
+            },
+          }
         : node
     )))
     setSelectedNodeId(null)
     setSaveStatus?.('unsaved')
   }
 
-  // Marks a node as having configuration validation errors
   const markNodeConfigurationError = (nodeId) => {
     setNodes((currentNodes) => currentNodes.map((node) => (
       node.id === nodeId
@@ -685,7 +672,6 @@ function WorkflowEditor({
     setSaveStatus?.('unsaved')
   }
 
-  // Removes a node and its attached connections from the canvas
   const deleteNode = (nodeId) => {
     setNodes((currentNodes) => currentNodes.filter((node) => node.id !== nodeId))
     setEdges((currentEdges) => currentEdges.filter(
@@ -753,22 +739,78 @@ function WorkflowEditor({
             />
           </ReactFlow>
 
-          {/* Cycle Detection Floating Toast */}
-          {cycleWarning && (
-            <div className="absolute top-5 left-1/2 -translate-x-1/2 z-30 max-w-xl rounded-lg border border-amber-600/60 bg-[#25170d]/95 p-3.5 shadow-2xl backdrop-blur-md flex items-start gap-3 text-xs text-[#f5d089]">
-              <AlertCircle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
-              <div className="flex-1">
-                <p className="font-semibold text-[#f0e5c9]">Kahn&apos;s Algorithm Cycle Prevention</p>
-                <p className="mt-0.5 leading-relaxed text-[#dec69e]">{cycleWarning}</p>
+          {workflowNotice && (
+            <section
+              role="alert"
+              aria-labelledby="workflow-notice-title"
+              className={`absolute left-1/2 top-4 z-30 w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 overflow-hidden rounded-xl border shadow-2xl backdrop-blur-xl ${
+                workflowNotice.type === 'error'
+                  ? 'border-rose-500/35 bg-[#241713]/[.97]'
+                  : workflowNotice.type === 'cycle'
+                    ? 'border-amber-500/35 bg-[#251d12]/[.97]'
+                    : 'border-[#8e7139]/45 bg-[#201a12]/[.98]'
+              }`}
+            >
+              <div className="flex items-start gap-3 px-4 py-3.5">
+                <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                  workflowNotice.type === 'error'
+                    ? 'bg-rose-500/10 text-rose-300'
+                    : workflowNotice.type === 'cycle'
+                      ? 'bg-amber-500/10 text-amber-300'
+                      : 'bg-[#d4ad58]/10 text-[#e2bd67]'
+                }`}>
+                  <AlertCircle aria-hidden="true" className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h2 id="workflow-notice-title" className="text-sm font-semibold text-[#f0e5c9]">
+                    {workflowNotice.title}
+                  </h2>
+                  {workflowNotice.message && (
+                    <p className="mt-1 text-xs leading-relaxed text-[#c9b991]">{workflowNotice.message}</p>
+                  )}
+                  {workflowNotice.issues && (
+                    <div className="mt-3 max-h-[min(52vh,26rem)] space-y-3 overflow-y-auto pr-1">
+                      <p className="text-[11px] text-[#a9997b]">
+                        {workflowNotice.issues.length} {workflowNotice.issues.length === 1 ? 'node needs' : 'nodes need'} attention. Open a node to review its specific errors.
+                      </p>
+                      {workflowNotice.issues.map(({ nodeId, nodeTitle, messages }) => (
+                        <div key={nodeId} className="rounded-lg border border-white/8 bg-black/15 px-3 py-2.5">
+                          <div className="flex items-center justify-between gap-3">
+                            <h3 className="truncate text-xs font-semibold text-[#e8d6ac]">{nodeTitle}</h3>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedNodeId(nodeId)
+                                setWorkflowNotice(null)
+                              }}
+                              className="shrink-0 rounded px-2 py-1 text-[11px] font-medium text-[#e2bd67] transition hover:bg-[#d4ad58]/10 hover:text-[#f0d58e]"
+                            >
+                              Configure
+                            </button>
+                          </div>
+                          <ul className="mt-2 space-y-1.5">
+                            {messages.map((message, index) => (
+                              <li key={`${nodeId}-${index}`} className="flex gap-2 text-xs leading-relaxed text-[#c9b991]">
+                                <span aria-hidden="true" className="mt-[0.45rem] h-1 w-1 shrink-0 rounded-full bg-[#d4ad58]" />
+                                <span>{message}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  aria-label="Dismiss workflow message"
+                  onClick={() => setWorkflowNotice(null)}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#a9997b] transition hover:bg-white/5 hover:text-[#f0e5c9]"
+                >
+                  <X aria-hidden="true" className="h-4 w-4" />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setCycleWarning('')}
-                className="text-[#a9997b] hover:text-[#f0e5c9]"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+            </section>
           )}
 
           {/* Context Menu */}
@@ -844,7 +886,6 @@ function WorkflowEditor({
 
           <NodeConfigSidebar
             node={selectedNode}
-            workflowId={currentWorkflowId}
             onClose={() => setSelectedNodeId(null)}
             onDelete={deleteNode}
             onSave={saveNodeConfiguration}
@@ -898,7 +939,6 @@ function WorkflowEditor({
   )
 }
 
-// ReactFlowProvider wrapper ensuring clean React Flow context initialization
 function WorkflowCanvas({
   activeTab,
   selectedTemplate,

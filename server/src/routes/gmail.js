@@ -110,15 +110,16 @@ export async function gmailRoutes(fastify) {
         </html>
       `);
     } catch (err) {
+      fastify.log.error({ code: err.code || 'UNKNOWN' }, 'Gmail OAuth exchange or session persistence failed');
       reply.type('text/html').send(`
         <!DOCTYPE html>
         <html>
           <body style="background:#100d0a;color:#e87979;font-family:sans-serif;padding:30px;text-align:center;">
-            <h3>OAuth Token Exchange Error</h3>
-            <p>${err.message}</p>
+            <h3>Gmail connection could not be completed</h3>
+            <p>Please retry. If this continues, check the server configuration.</p>
             <script>
               if (window.opener) {
-                window.opener.postMessage({ type: 'oauth-result', provider: 'gmail', connected: false, error: '${err.message.replace(/'/g, "\\'")}' }, '*');
+                window.opener.postMessage({ type: 'oauth-result', provider: 'gmail', connected: false, error: 'Gmail connection could not be completed' }, '*');
               }
               setTimeout(() => window.close(), 2500);
             </script>
@@ -132,7 +133,7 @@ export async function gmailRoutes(fastify) {
   // Disconnect — clear Gmail session
   // -----------------------------------------------------------------------
   fastify.post('/api/v1/gmail/disconnect', async () => {
-    clearGmailSession();
+    await clearGmailSession();
     return {
       connected: false,
       message: 'Gmail account disconnected successfully.',

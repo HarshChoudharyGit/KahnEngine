@@ -1,10 +1,11 @@
 import { memoryStore } from '../store/memoryStore.js';
+import { getExecution } from '../db/workflowRepository.js';
 
 export async function telemetryRoutes(fastify) {
   // SSE stream endpoint for real-time node state and log streaming
-  fastify.get('/api/v1/telemetry/stream/:executionId', (request, reply) => {
+  fastify.get('/api/v1/telemetry/stream/:executionId', async (request, reply) => {
     const { executionId } = request.params;
-    const execution = memoryStore.getExecution(executionId);
+    const execution = await getExecution(executionId);
 
     // Set Server-Sent Events headers
     reply.raw.setHeader('Content-Type', 'text/event-stream');
@@ -46,19 +47,14 @@ export async function telemetryRoutes(fastify) {
             durationMs: execution.durationMs,
           })}\n\n`
         );
-        reply.raw.end();
-        return;
       } else if (execution.status === 'FAILED') {
         reply.raw.write(
           `event: execution_failed\ndata: ${JSON.stringify({
             executionId,
             status: 'FAILED',
             error: execution.error,
-            durationMs: execution.durationMs,
           })}\n\n`
         );
-        reply.raw.end();
-        return;
       }
     }
 

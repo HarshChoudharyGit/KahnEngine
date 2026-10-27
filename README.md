@@ -1,6 +1,6 @@
 # ⚡ Kahn Engine
 
-> **Deterministic, High-Throughput Visual Workflow Orchestrator & Distributed Execution Engine**  
+> **Visual Workflow Orchestrator & Execution Engine**<br />
 > *Built for Webster 2026 by Team `<SYNTAXRUSH>` (Team ID: 233)*
 
 ---
@@ -8,9 +8,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-v20+-339933?style=flat&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![Fastify](https://img.shields.io/badge/Fastify-High--Performance-000000?style=flat&logo=fastify&logoColor=white)](https://fastify.dev/)
 [![React Flow](https://img.shields.io/badge/@xyflow/react-Canvas%20UI-FF0072?style=flat)](https://reactflow.dev/)
-[![BullMQ](https://img.shields.io/badge/BullMQ-Redis%20Queue-CC3534?style=flat&logo=redis&logoColor=white)](https://bullmq.io/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Prisma%20ORM-336791?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Redis](https://img.shields.io/badge/Redis-Pub%2FSub%20%26%20Heartbeats-DC382D?style=flat&logo=redis&logoColor=white)](https://redis.io/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Node%20pg-336791?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![SSE](https://img.shields.io/badge/Telemetry-Server--Sent%20Events-00ADD8?style=flat)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)
 
 ---
@@ -35,7 +33,7 @@ In modern cloud infrastructures and microservice automation, engineering teams f
 4. **Zero Visibility & Telemetry Blindness**: Standard background workers provide no live per-node execution telemetry, leaving engineers blind to stalled, queued, or failing nodes in active runs.
 
 ### 💡 The Solution: Kahn Engine
-**Kahn Engine** is an event-driven, distributed workflow orchestration platform. It pairs a **visual drag-and-drop canvas (React Flow)** with an **in-memory DAG cycle detector (Kahn’s Algorithm)**, an ultra-fast **Fastify API gateway (<10ms acknowledgment)**, and a **decoupled BullMQ/Redis worker cluster**. Real-time execution logs and per-node statuses are pushed unidirectionally to client browsers via **Server-Sent Events (SSE)**, completely eliminating database poll thrashing.
+**Kahn Engine** pairs a **visual drag-and-drop canvas (React Flow)** with **DAG validation (Kahn’s Algorithm)** and a **Fastify API**. Workflow definitions and execution history are persisted in PostgreSQL. Workflow execution currently runs asynchronously in the API process; BullMQ/Redis workers and automatic retry/DLQ handling are not implemented. Real-time logs and per-node statuses are sent to connected clients using **Server-Sent Events (SSE)**.
 
 ---
 
@@ -49,10 +47,9 @@ sequenceDiagram
     actor Dev as Developer / UI
     participant Client as React Flow Canvas
     participant Gateway as Fastify API Gateway
-    participant DB as PostgreSQL (Prisma)
-    participant Queue as Redis (BullMQ Queue)
-    participant Worker as Distributed Worker
-    participant SSE as SSE Streamer (Redis Pub/Sub)
+    participant DB as PostgreSQL (parameterized SQL)
+    participant Engine as In-process Execution Engine
+    participant SSE as In-process SSE Streamer
 
     Dev->>Client: Construct Workflow & Trigger Connections
     Client->>Client: In-Memory Cycle Detection (Kahn's Algorithm)
@@ -60,30 +57,24 @@ sequenceDiagram
     Gateway->>DB: Persist Workflow Schema (JSONB Nodes & Edges)
     
     rect rgb(240, 248, 255)
-    Note over Gateway,Queue: Ingestion Phase (<10ms)
-    alt Webhook or Cron Trigger
+    Note over Gateway,Engine: Ingestion and execution
+    alt Webhook or manual trigger
         Gateway->>Gateway: Validate Ingestion Payload
-        Gateway->>Queue: Push Job (execution_id, status: PENDING)
+        Gateway->>DB: Persist execution (status: queued)
         Gateway-->>Client: 202 Accepted (execution_id)
+        Gateway->>Engine: Start asynchronous workflow run
     end
     end
 
     rect rgb(255, 250, 240)
-    Note over Queue,Worker: Decoupled Execution & Telemetry
-    Queue->>Worker: Pop Job from Queue
-    Worker->>Worker: Compute Topological Order (DAG Sort)
+    Note over Engine,SSE: In-process execution and telemetry
+    Engine->>Engine: Compute topological order (DAG sort)
     loop Node Execution Loop
-        Worker->>Worker: Execute Node (HTTP / Transform / Delay)
-        Worker->>SSE: Emit Event (RUNNING / SUCCESS / FAILED)
+        Engine->>Engine: Execute Node (HTTP / Transform / Delay)
+        Engine->>SSE: Emit Event (RUNNING / SUCCESS / FAILED)
         SSE-->>Client: Live SSE Broadcast (Logs & Status)
-        opt Node Failure
-            Worker->>Worker: Exponential Backoff Retry + Jitter
-            alt Retries Exhausted
-                Worker->>Queue: Route to Dead-Letter Queue (DLQ)
-            end
-        end
     end
-    Worker->>DB: Commit Full Run History & Timestamps (SUCCESS / FAILED)
+    Engine->>DB: Persist run history and timestamps
     end
 ```
 
@@ -142,16 +133,9 @@ classDiagram
         +handleCronTrigger()
     }
 
-    class QueueBroker {
-        +pushJob(jobPayload)
-        +popJob()
-        +pushToDLQ(failedJob)
-    }
-
-    class Worker {
+    class WorkflowExecutor {
         +computeTopologicalOrder(graph)
         +executeStepwise(order)
-        +heartbeat()
     }
 
     class TelemetryStreamer {
@@ -161,9 +145,8 @@ classDiagram
     }
 
     WorkflowSchema --> NodeDef : contains
-    FastifyApiGateway --> QueueBroker : enqueues
-    QueueBroker --> Worker : processes
-    Worker --> TelemetryStreamer : publishes events
+    FastifyApiGateway --> WorkflowExecutor : starts asynchronously
+    WorkflowExecutor --> TelemetryStreamer : broadcasts events
 ```
 
 ---
@@ -174,7 +157,7 @@ classDiagram
 - Interactive drag-and-drop node graph canvas built on `@xyflow/react`.
 - Supports 5 primary operational node types:
   - **Webhook Trigger**: External HTTP POST entrypoints.
-  - **Cron Trigger**: Automated temporal runs via standard cron syntax.
+  - **Cron Trigger**: Stores cron syntax and timezone with the workflow; timed dispatch is not implemented.
   - **HTTP Request**: REST API connector with configurable methods, headers, and payloads.
   - **Transform**: In-memory JavaScript/JSON transformation routines.
   - **Delay**: Configurable pauses and rate dampeners.
@@ -185,14 +168,14 @@ classDiagram
 - Strictly calculates parent-child dependency orders in linear time: $\mathcal{O}(V + E)$.
 - Guarantees child tasks only trigger once upstream prerequisite nodes resolve with verified outputs.
 
-### 3. 🛡️ Resilient Fault Tolerance & DLQ
-- Configurable **Exponential Backoff with Random Jitter** prevents thundering herd crashes against upstream third-party APIs.
-- **Dead-Letter Queue (DLQ)** isolation: Unrecoverable failures are quarantined without terminating parallel pipeline branches.
-- **Worker Heartbeat Tracking**: Workers emit regular heartbeats to Redis; stalled or aborted tasks are transparently rescheduled on healthy worker instances.
+### 3. 🗃️ Durable Execution History
+- Workflow definitions, execution records, node results, and execution logs are stored in PostgreSQL.
+- Database-backed history remains available after the API process restarts.
+- Distributed retries, a dead-letter queue, and worker heartbeat recovery are not implemented.
 
 ### 4. 📡 Real-Time Telemetry & Log Streaming
 - Zero-database read overhead: Replaces wasteful client polling intervals with **Server-Sent Events (SSE)**.
-- Telemetry events stream directly from BullMQ worker output hooks through Redis Pub/Sub directly to the browser UI.
+- Telemetry events stream to connected clients over the API process's Server-Sent Events endpoint.
 - Comprehensive per-node state tracking: `PENDING`, `RUNNING`, `SUCCESS`, `FAILED`.
 
 ---
@@ -202,9 +185,9 @@ classDiagram
 | Dimension | The Naive Way | Smart Engineering (Kahn Engine) | Why It Wins |
 | :--- | :--- | :--- | :--- |
 | **Graph Validation & Ordering** | Recursive graph traversals on live HTTP requests. | **Kahn’s Algorithm (Topological Sort)** running double-pass validation (client-side pre-check + server-side in-memory array mapping). | Guarantees deterministic $\mathcal{O}(V + E)$ execution order and rejects circular dependencies at the gateway before wasting worker compute resources. |
-| **Task Execution & Recovery** | Running multi-step tasks inside standard `async`/`await` blocks on the main web thread; fails instantly on timeouts. | **Decoupled BullMQ worker queueing** with configurable exponential backoff, jitter, and Dead-Letter Queue (DLQ) isolation. | Isolates task failures, buffers load spikes safely in Redis, and prevents downstream cascading crashes. |
-| **Telemetry & Log Streaming** | Client HTTP short-polling (`setInterval`), flooding the database with redundant read queries. | **Unidirectional Server-Sent Events (SSE)** streaming backed by Redis Pub/Sub. | Eliminates read-query overhead, reduces network roundtrip costs, and maintains real-time responsiveness at scale. |
-| **Ingestion Concurrency** | Synchronously waiting for entire pipeline execution to complete before responding to HTTP callers. | **Non-blocking API Gateway**: Validates payload and acknowledges request in **<10ms** with an `execution_id`. | Absorbs high-volume traffic bursts without blocking HTTP event loops or exceeding client timeouts. |
+| **Task Execution & Recovery** | Running multi-step tasks synchronously in the request handler. | Execution is started asynchronously in the API process, and execution state is persisted in PostgreSQL. | Keeps the request path responsive and retains run history; a separate durable queue and automatic recovery are not yet available. |
+| **Telemetry & Log Streaming** | Client HTTP short-polling (`setInterval`). | **Unidirectional Server-Sent Events (SSE)** streamed by the API process. | Streams live execution updates to connected clients; SSE subscriber state is process-local. |
+| **Ingestion Concurrency** | Waiting for the entire workflow run to finish before responding. | API persists the run and returns `202` before starting its in-process execution. | Avoids holding the HTTP request open for the full run; the response time is not guaranteed to be under 10ms. |
 
 ---
 
@@ -219,16 +202,18 @@ classDiagram
 ### Backend & API
 - **Web Framework**: Fastify (Node.js) for high-throughput, low-overhead HTTP routing
 - **Graph & Math Utilities**: `graphlib` + Custom Kahn's Topological Sorter
-- **Scheduler**: `node-cron` for parsing cron patterns and dispatching jobs
+- **Schedules**: Cron trigger definitions and time zones persist in `workflow_schedules`; a background cron dispatcher is not implemented yet
 
 ### Distributed Queue & State
-- **Task Queue**: `BullMQ` (Redis-backed concurrency control, stalled job recovery, and retries)
-- **Pub/Sub & Heartbeats**: Redis 7.x
+- **Task Queue**: BullMQ/Redis integration is planned but not implemented
 - **Event Streaming**: Server-Sent Events (SSE) via Fastify SSE plugin
 
 ### Storage & Schema
 - **Database**: PostgreSQL 16
-- **ORM**: Prisma ORM with connection pooling & JSONB document schemas
+- **Database access**: Parameterized SQL through a shared `pg` connection pool
+- **Workflow tables**: `workflows`, `workflow_executions`, `node_executions`, `workflow_schedules`, `integration_connections`, and `execution_logs`
+- **OAuth credentials**: Existing encrypted token payloads remain in the separate `integration_sessions` table; connection metadata never stores tokens
+- **Schema files**: Individual table definitions are in `server/src/db/schema/`, named after each table. Apply database changes through the versioned migrations in `server/src/db/migrations/`.
 
 ---
 
@@ -236,43 +221,16 @@ classDiagram
 
 ```text
 kahn-engine/
-├── apps/
-│   ├── client/                  # Frontend Web Application
-│   │   ├── src/
-│   │   │   ├── components/      # UI components & Canvas custom nodes
-│   │   │   │   ├── nodes/       # Webhook, Cron, HTTP, Transform, Delay
-│   │   │   │   └── canvas/      # React Flow canvas wrapper & toolbar
-│   │   │   ├── hooks/           # useSSETelemetry, useWorkflowGraph
-│   │   │   ├── utils/           # Client-side Kahn's cycle detector
-│   │   │   └── App.tsx
-│   │   └── package.json
-│   │
-│   ├── server/                  # Fastify API Gateway
-│   │   ├── src/
-│   │   │   ├── routes/          # /api/v1/workflows, /api/v1/webhooks
-│   │   │   ├── controllers/     # Workflow & Ingestion controllers
-│   │   │   ├── plugins/         # SSE streaming, Prisma, Redis plugins
-│   │   │   └── index.ts
-│   │   └── package.json
-│   │
-│   └── worker/                  # Decoupled BullMQ Background Worker
-│       ├── src/
-│       │   ├── engine/          # TopologicalSorter, GraphRunner
-│       │   ├── executors/       # Node execution handlers & retries
-│       │   ├── queues/          # BullMQ queue & DLQ handlers
-│       │   └── worker.ts
-│       └── package.json
-│
-├── packages/
-│   └── shared/                  # Common TypeScript interfaces & schemas
-│       ├── src/
-│       │   ├── types.ts         # NodeDef, EdgeDef, ExecutionStatus
-│       │   └── validation.ts    # Graph validation logic
-│       └── package.json
-│
-├── prisma/
-│   └── schema.prisma            # PostgreSQL schemas (Workflow, Run, Log)
-├── docker-compose.yml           # PostgreSQL & Redis container config
+├── client/                      # Frontend application
+│   └── src/
+├── server/
+│   ├── src/
+│   │   ├── db/                  # PostgreSQL pool, repositories, migrations
+│   │   ├── engine/              # Workflow executor and integrations
+│   │   ├── routes/              # Fastify API routes
+│   │   ├── services/            # Supporting services
+│   │   └── index.js             # Backend entry point
+│   └── .env.example
 └── README.md
 ```
 
@@ -282,49 +240,40 @@ kahn-engine/
 
 ### 1. Prerequisites
 - [Node.js](https://nodejs.org/) `>= 20.x`
-- [Docker](https://www.docker.com/) & Docker Compose (for PostgreSQL & Redis)
+- PostgreSQL (Redis is not required by the current implementation)
 - `npm` or `pnpm`
 
-### 2. Infrastructure Setup (Docker)
-Start PostgreSQL and Redis in the background:
-```bash
-docker-compose up -d
-```
+### 2. Infrastructure Setup
+Start a PostgreSQL instance and create a database for the backend.
 
 ### 3. Environment Variables
-Create a `.env` file in the root directory:
+Copy `server/.env.example` to `server/.env` (or provide the values in the server process environment). Add `sslmode=require` to `DATABASE_URL` for hosted databases. Generate the OAuth session key with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`.
 ```env
 # Database
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/kahn_engine?schema=public"
 
-# Redis & Queues
-REDIS_HOST="127.0.0.1"
-REDIS_PORT=6379
+SESSION_ENCRYPTION_KEY="64-character hexadecimal key"
 
 # Server
 PORT=4000
 HOST="0.0.0.0"
-CORS_ORIGIN="http://localhost:5173"
 ```
 
 ### 4. Database Migration
 ```bash
-npx prisma migrate dev --name init
+npm run db:migrate --prefix server
 ```
 
-### 5. Running the Application
-Run services concurrently in development mode:
+Pending SQL migrations are also applied at server startup. Run the backend and frontend:
 
 ```bash
-# Terminal 1: Fastify API Gateway
-npm run dev --workspace=@kahn/server
-
-# Terminal 2: BullMQ Distributed Worker
-npm run dev --workspace=@kahn/worker
-
-# Terminal 3: React Flow Frontend
-npm run dev --workspace=@kahn/client
+npm run dev --prefix server
+npm run dev --prefix client
 ```
+
+Workflows, execution records, node results, cron schedule definitions, integration status, and encrypted OAuth sessions persist in PostgreSQL. The SSE subscriber registry and GitHub polling cursor remain process-local runtime state. Cron definitions are stored, but this backend does not currently dispatch timed runs. Verify workflow persistence by creating a workflow with `POST /api/v1/workflows`, restarting the server, then retrieving it with `GET /api/v1/workflows/:id`. Live GitHub and Gmail requests still use their external APIs and require their OAuth credentials. BullMQ is not implemented.
+
+Before the canvas dispatches a test run, every node must have a saved configuration and pass node-specific checks. The backend repeats configuration checks along with graph shape and cycle validation; invalid runs return HTTP 400 with per-node `nodeErrors`. This validates configured values, not external service availability or OAuth connectivity. A Cron node's configuration is stored and checked, but it does not schedule automatic runs.
 
 ---
 
@@ -343,7 +292,7 @@ Content-Type: application/json
 }
 ```
 
-**Response (Fast Ack <10ms):**
+**Response:**
 ```json
 {
   "success": true,
@@ -354,7 +303,7 @@ Content-Type: application/json
 ```
 
 ### 2. Live Telemetry SSE Stream
-Stream real-time step outputs and statuses directly from the worker:
+Stream real-time step outputs and statuses from the API process:
 ```http
 GET /api/v1/telemetry/stream/:executionId HTTP/1.1
 Accept: text/event-stream

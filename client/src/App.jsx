@@ -7,14 +7,12 @@ import DashboardPage from './pages/dashboard/DashboardPage.jsx'
 import WorkflowCanvas from './components/WorkflowCanvas.jsx'
 import { getWorkflow } from './services/api.js'
 
-// Renders the public landing page with navigation to dashboard
 function LandingRoute() {
   const navigate = useNavigate()
 
   return <LandingPage onLaunchBuilder={() => navigate('/dashboard')} />
 }
 
-// Main workflow workspace handling active tab, persistence, and canvas state
 function Workspace() {
   const [searchParams] = useSearchParams()
   const workflowIdParam = searchParams.get('wf')
@@ -22,8 +20,7 @@ function Workspace() {
   const [selectedTemplate, setSelectedTemplate] = useState(null)
   const [workflowTitle, setWorkflowTitle] = useState('My workflow')
   const [loadedWorkflow, setLoadedWorkflow] = useState(null)
-  const [resolvedWorkflowId, setResolvedWorkflowId] = useState(null)
-  const isLoadingWorkflow = Boolean(workflowIdParam && resolvedWorkflowId !== workflowIdParam)
+  const [isLoadingWorkflow, setIsLoadingWorkflow] = useState(Boolean(workflowIdParam))
   const [saveStatus, setSaveStatus] = useState('saved')
   const [isSaving, setIsSaving] = useState(false)
   const [isActive, setIsActive] = useState(true)
@@ -31,9 +28,14 @@ function Workspace() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    if (!workflowIdParam) return
+    if (!workflowIdParam) {
+      setLoadedWorkflow(null)
+      setIsLoadingWorkflow(false)
+      return
+    }
 
     let isMounted = true
+    setIsLoadingWorkflow(true)
 
     getWorkflow(workflowIdParam)
       .then((wf) => {
@@ -47,7 +49,7 @@ function Workspace() {
         console.error('Failed to load workflow by ID:', err)
       })
       .finally(() => {
-        if (isMounted) setResolvedWorkflowId(workflowIdParam)
+        if (isMounted) setIsLoadingWorkflow(false)
       })
 
     return () => {
@@ -92,7 +94,7 @@ function Workspace() {
           <WorkflowCanvas
             activeTab={activeTab}
             selectedTemplate={selectedTemplate}
-            loadedWorkflow={workflowIdParam ? loadedWorkflow : null}
+            loadedWorkflow={loadedWorkflow}
             workflowTitle={workflowTitle}
             setSaveStatus={setSaveStatus}
             setIsSaving={setIsSaving}
@@ -104,7 +106,6 @@ function Workspace() {
   )
 }
 
-// Root application component setting up router and view routes
 function App() {
   return (
     <BrowserRouter>

@@ -25,7 +25,6 @@ import {
 } from 'lucide-react'
 import { listWorkflows, saveWorkflow, deleteWorkflow, listExecutions, fetchHealth } from '../../services/api.js'
 
-// Formats an ISO date string into a relative human-readable timestamp
 function formatRelativeTime(isoString) {
   if (!isoString) return 'Unknown'
   const diff = Date.now() - new Date(isoString).getTime()
@@ -36,13 +35,12 @@ function formatRelativeTime(isoString) {
   return new Date(isoString).toLocaleDateString()
 }
 
-// Formats an ISO date string into localized medium date and short time
 function formatDateTime(isoString) {
   if (!isoString) return ''
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(isoString))
 }
 
-// Displays a metric stat card with icon, title, and current value
+/** Stat card mini-component */
 function StatCard({ icon: Icon, label, value, accent = false }) {
   return (
     <div className="rounded-xl border border-[#8e7139]/25 bg-[#17120e] p-4 transition hover:border-[#d4ad58]/40">
@@ -57,7 +55,7 @@ function StatCard({ icon: Icon, label, value, accent = false }) {
   )
 }
 
-// Renders empty state guidance when no workflows exist
+/** Empty state shown when no workflows exist */
 function EmptyState({ onCreateNew }) {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center">
@@ -80,7 +78,7 @@ function EmptyState({ onCreateNew }) {
   )
 }
 
-// Individual workflow card displaying graph metrics and action dropdown
+/** Individual workflow card */
 function WorkflowCard({ workflow, executionCount, onOpen, onDuplicate, onDelete }) {
   const [showMenu, setShowMenu] = useState(false)
   const nodeCount = workflow.nodes?.length || 0
@@ -184,7 +182,7 @@ function WorkflowCard({ workflow, executionCount, onOpen, onDuplicate, onDelete 
   )
 }
 
-// Modal dialog for naming and initializing a new workflow
+/** Create New Workflow modal */
 function CreateWorkflowModal({ isOpen, onClose, onCreated }) {
   const [name, setName] = useState('')
   const [isCreating, setIsCreating] = useState(false)
@@ -192,7 +190,6 @@ function CreateWorkflowModal({ isOpen, onClose, onCreated }) {
 
   if (!isOpen) return null
 
-  // Submits the new workflow creation request to the API
   const handleCreate = async (e) => {
     e.preventDefault()
     const finalName = name.trim() || 'Untitled Workflow'
@@ -288,7 +285,7 @@ function CreateWorkflowModal({ isOpen, onClose, onCreated }) {
   )
 }
 
-// Main dashboard page showing workflow metrics, recent runs, and management actions
+/** Main Dashboard Page */
 function DashboardPage() {
   const navigate = useNavigate()
   const [workflows, setWorkflows] = useState([])
@@ -300,7 +297,6 @@ function DashboardPage() {
   const [serverStatus, setServerStatus] = useState('checking') // 'checking' | 'online' | 'offline'
   const [deleteConfirm, setDeleteConfirm] = useState(null) // { id, name }
 
-  // Fetches workflows, executions, and API gateway health in parallel
   const loadData = useCallback(async (showRefreshIndicator = false) => {
     if (showRefreshIndicator) setIsRefreshing(true)
     else setIsLoading(true)
@@ -327,17 +323,14 @@ function DashboardPage() {
     loadData()
   }, [loadData])
 
-  // Opens the visual workflow editor for a specific workflow ID
   const handleOpenWorkflow = (workflowId) => {
     navigate(`/workspace?wf=${workflowId}`)
   }
 
-  // Opens the modal form to create a new workflow
   const handleCreateNew = () => {
     setShowCreateModal(true)
   }
 
-  // Handles workflow creation callback and routes to workspace
   const handleWorkflowCreated = (workflowId) => {
     setShowCreateModal(false)
     if (workflowId) {
@@ -347,7 +340,6 @@ function DashboardPage() {
     }
   }
 
-  // Duplicates an existing workflow structure and redirects to the cloned copy
   const handleDuplicate = async (workflow) => {
     try {
       const result = await saveWorkflow({
@@ -364,12 +356,10 @@ function DashboardPage() {
     }
   }
 
-  // Stages a workflow for deletion confirmation
   const handleDeleteRequest = (id, name) => {
     setDeleteConfirm({ id, name })
   }
 
-  // Confirms workflow deletion and updates local state
   const handleDeleteConfirm = async () => {
     if (!deleteConfirm) return
     try {

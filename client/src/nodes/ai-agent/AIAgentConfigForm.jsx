@@ -35,14 +35,11 @@ const availableTools = [
   },
 ]
 
-// Form component for configuring AI agent models, prompts, temperature, and tool attachments
 function AIAgentConfigForm({ value, errors, onChange }) {
-  // Updates a single parameter in the AI agent configuration
   const setField = (key, nextValue) => onChange({ ...value, [key]: nextValue })
 
   const currentTools = Array.isArray(value.tools) ? value.tools : ['web_search', 'code_interpreter', 'http_request']
 
-  // Adds or removes an autonomous reasoning tool from the agent toolset
   const toggleTool = (toolId) => {
     if (currentTools.includes(toolId)) {
       setField('tools', currentTools.filter((t) => t !== toolId))

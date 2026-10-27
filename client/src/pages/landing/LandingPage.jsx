@@ -30,7 +30,6 @@ import {
 } from '../../data/landingData.js'
 import './landing.css'
 
-// Marketing landing page featuring animated visual loop, value propositions, and live demo preview
 function LandingPage({ onLaunchBuilder }) {
   const [replayKey, setReplayKey] = useState(0)
   const reducedMotion = useReducedMotion()
@@ -50,13 +49,11 @@ function LandingPage({ onLaunchBuilder }) {
     mass: 0.5,
   })
 
-  // Generates a smooth scroll event handler for anchor links
   const scrollLink = (id) => (event) => {
     event.preventDefault()
     document.getElementById(id)?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth' })
   }
 
-  // Restarts the interactive workflow demo animation
   const replayDemo = () => {
     setReplayKey((key) => key + 1)
   }

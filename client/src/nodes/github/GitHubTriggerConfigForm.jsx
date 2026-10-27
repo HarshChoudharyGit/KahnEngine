@@ -7,7 +7,6 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
 const inputClassName =
   'mt-1.5 w-full rounded-md border border-[#8e7139]/35 bg-[#100d0a] px-3 py-2.5 text-sm text-[#f0e5c9] outline-none transition placeholder:text-[#756b5a] focus:border-[#c69b45]'
 
-// Form component for configuring GitHub webhook triggers, repository bindings, and event types
 function GitHubTriggerConfigForm({ value, errors, onChange }) {
   const [connected, setConnected] = useState(false)
   const [username, setUsername] = useState('')
@@ -20,11 +19,9 @@ function GitHubTriggerConfigForm({ value, errors, onChange }) {
     connected && value.repository && branchState.repository !== value.repository,
   )
 
-  // Updates a single field in the GitHub trigger form value
   const setField = (key, nextValue) =>
     onChange({ ...value, [key]: nextValue })
 
-  // Opens a popup window to initiate GitHub OAuth authorization
   const connectGitHub = () => {
     const popup = window.open(
       `${API_URL}/api/integrations/github/connect`,
@@ -45,7 +42,6 @@ function GitHubTriggerConfigForm({ value, errors, onChange }) {
     }
   }
 
-  // Fetches repositories accessible to the authenticated GitHub user
   const loadRepositories = async () => {
     try {
       const response = await fetch(
@@ -64,7 +60,6 @@ function GitHubTriggerConfigForm({ value, errors, onChange }) {
     }
   }
 
-  // Checks current GitHub OAuth connection status and username from backend
   const loadConnectionStatus = async (showMessage = false) => {
     try {
       const response = await fetch(
@@ -93,7 +88,6 @@ function GitHubTriggerConfigForm({ value, errors, onChange }) {
   }
 
   useEffect(() => {
-    // Listens for postMessage auth events from the GitHub OAuth popup
     const handleOAuthMessage = (event) => {
       if (event.data?.type !== 'oauth-result' || event.data?.provider !== 'github') {
         return
@@ -124,7 +118,6 @@ function GitHubTriggerConfigForm({ value, errors, onChange }) {
     if (!connected || !value.repository) return undefined
 
     let active = true
-    // Fetches branches for the selected repository
     const loadBranches = async () => {
       const [owner, repo] = value.repository.split('/')
 

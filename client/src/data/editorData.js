@@ -118,14 +118,6 @@ const nodeOptions = [
     configType: 'wait',
   },
   {
-    title: 'Schedule Trigger',
-    subtitle: 'Start on a recurring interval, daily, or cron schedule',
-    category: 'TRIGGER',
-    icon: CalendarClock,
-    accent: '#e09f3e',
-    configType: 'scheduleTrigger',
-  },
-  {
     title: 'Cron Trigger',
     subtitle: 'Start on a recurring schedule',
     category: 'TRIGGER',

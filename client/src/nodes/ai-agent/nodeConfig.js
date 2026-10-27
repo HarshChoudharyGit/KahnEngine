@@ -70,7 +70,6 @@ const aiAgentConfig = {
       required: true,
     },
   ],
-  // Validates agent instructions, prompt templates, temperature, and JSON schema
   validate: (form) => {
     const errors = {}
     if (!form.systemInstructions?.trim()) errors.systemInstructions = 'Add system instructions.'

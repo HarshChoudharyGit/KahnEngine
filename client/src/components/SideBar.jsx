@@ -58,7 +58,6 @@ const helpContent = {
   },
 }
 
-// Loads the saved user display name from localStorage with a fallback default
 function loadDisplayName() {
   try {
     return window.localStorage.getItem('dormammu-loop-display-name') || 'Sorcerer Supreme'
@@ -68,7 +67,6 @@ function loadDisplayName() {
   }
 }
 
-// Sidebar navigation offering routes, template loading, and utility slide-out drawers
 function SideBar({ onGoHome, onGoDashboard, onGoEditor, onLoadTemplate }) {
   const [activePanel, setActivePanel] = useState('')
   const [displayName, setDisplayName] = useState(loadDisplayName)
@@ -87,14 +85,12 @@ function SideBar({ onGoHome, onGoDashboard, onGoEditor, onLoadTemplate }) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [activePanel])
 
-  // Opens a specified sidebar panel and clears past feedback notices
   const openPanel = (panel) => {
     setFeedback('')
     setActivePanel(panel)
     if (panel === 'Updates') setUpdateUnread(false)
   }
 
-  // Persists the custom display name to localStorage
   const saveProfile = (event) => {
     event.preventDefault()
     const nextName = nameDraft.trim()
@@ -113,7 +109,6 @@ function SideBar({ onGoHome, onGoDashboard, onGoEditor, onLoadTemplate }) {
     }
   }
 
-  // Copies variable template expressions to clipboard
   const copyVariable = async (expression) => {
     try {
       await navigator.clipboard.writeText(expression)
@@ -124,7 +119,6 @@ function SideBar({ onGoHome, onGoDashboard, onGoEditor, onLoadTemplate }) {
     }
   }
 
-  // Copies formatted browser environment details and issue description to clipboard
   const copyBugReport = async (event) => {
     event.preventDefault()
     const report = [
@@ -144,7 +138,6 @@ function SideBar({ onGoHome, onGoDashboard, onGoEditor, onLoadTemplate }) {
     }
   }
 
-  // Clears stored profile name from localStorage and restores default
   const resetProfile = () => {
     try {
       window.localStorage.removeItem('dormammu-loop-display-name')
@@ -157,7 +150,6 @@ function SideBar({ onGoHome, onGoDashboard, onGoEditor, onLoadTemplate }) {
     }
   }
 
-  // Renders the appropriate slide-out drawer content based on active panel
   const renderPanelContent = () => {
     if (activePanel === 'Templates') {
       return (

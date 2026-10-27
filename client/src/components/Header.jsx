@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { Check, LoaderCircle, MoreHorizontal, Plus, RotateCcw, Save } from 'lucide-react'
 
-// Top navigation header bar for workflow management, tab toggling, and persistence
 const Header = ({
   activeTab,
   onTabChange,
@@ -16,7 +15,6 @@ const Header = ({
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(workflowTitle)
 
-  // Commits title changes when user presses Enter or submits the title form
   const handleTitleSubmit = (e) => {
     e.preventDefault()
     if (titleDraft.trim()) {
@@ -76,10 +74,11 @@ const Header = ({
             type="button"
             aria-pressed={activeTab === tab}
             onClick={() => onTabChange(tab)}
-            className={`rounded px-3 py-1.5 text-xs transition ${activeTab === tab
+            className={`rounded px-3 py-1.5 text-xs transition ${
+              activeTab === tab
                 ? 'font-medium text-[#f0d58e] shadow-sm bg-[#d4ad58]/10'
                 : 'text-[#9d9076] hover:text-[#e5d8b8]'
-              }`}
+            }`}
           >
             {label}
           </button>
@@ -91,15 +90,18 @@ const Header = ({
           <button
             type="button"
             onClick={onToggleActive}
-            className={`hidden items-center gap-2 text-xs transition md:flex ${isActive ? 'text-emerald-400' : 'text-[#b9aa8d] hover:text-[#f0d58e]'
-              }`}
+            className={`hidden items-center gap-2 text-xs transition md:flex ${
+              isActive ? 'text-emerald-400' : 'text-[#b9aa8d] hover:text-[#f0d58e]'
+            }`}
             aria-label={`Workflow is ${isActive ? 'active' : 'inactive'}`}
           >
             {isActive ? 'Active' : 'Inactive'}
-            <span className={`flex h-4.5 w-9 items-center rounded-full border px-0.5 transition ${isActive ? 'border-emerald-600 bg-emerald-950/60' : 'border-[#8e7139]/40 bg-[#2a2118]'
-              }`}>
-              <span className={`h-3.5 w-3.5 rounded-full transition-transform ${isActive ? 'translate-x-4 bg-emerald-400' : 'bg-[#b9aa8d]'
-                }`} />
+            <span className={`flex h-4.5 w-9 items-center rounded-full border px-0.5 transition ${
+              isActive ? 'border-emerald-600 bg-emerald-950/60' : 'border-[#8e7139]/40 bg-[#2a2118]'
+            }`}>
+              <span className={`h-3.5 w-3.5 rounded-full transition-transform ${
+                isActive ? 'translate-x-4 bg-emerald-400' : 'bg-[#b9aa8d]'
+              }`} />
             </span>
           </button>
         )}
@@ -121,12 +123,13 @@ const Header = ({
         )}
 
         <span className="hidden items-center gap-1.5 px-1 text-xs text-[#a9997b] lg:flex">
-          <span className={`h-1.5 w-1.5 rounded-full ${saveStatus === 'saved'
+          <span className={`h-1.5 w-1.5 rounded-full ${
+            saveStatus === 'saved'
               ? 'bg-[#d4ad58] shadow-[0_0_8px_rgba(212,173,88,0.65)]'
               : saveStatus === 'unsaved'
-                ? 'bg-amber-400'
-                : 'bg-rose-400'
-            }`} />
+              ? 'bg-amber-400'
+              : 'bg-rose-400'
+          }`} />
           {saveStatus === 'saved' ? 'Saved' : saveStatus === 'unsaved' ? 'Unsaved' : 'Save Error'}
         </span>
 

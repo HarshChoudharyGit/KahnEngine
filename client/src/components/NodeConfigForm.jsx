@@ -3,13 +3,10 @@ import { Plus, Trash2 } from 'lucide-react'
 
 const inputClassName = 'mt-1.5 w-full rounded-md border border-[#8e7139]/35 bg-[#100d0a] px-3 py-2.5 text-sm text-[#f0e5c9] outline-none transition placeholder:text-[#756b5a] focus:border-[#c69b45]'
 
-// Schema-driven form component rendering dynamic input controls for node parameters
 function NodeConfigForm({ schema, value, errors, onChange }) {
   const [integrationNotice, setIntegrationNotice] = useState('')
-  // Updates a single field in the configuration value object
   const setField = (key, nextValue) => onChange({ ...value, [key]: nextValue })
 
-  // Renders a repeatable key-value pair editor with add and remove actions
   const renderKeyValueEditor = (field) => {
     const rows = value[field.key] ?? []
     const updateRow = (index, key, nextValue) => {
@@ -68,7 +65,6 @@ function NodeConfigForm({ schema, value, errors, onChange }) {
     )
   }
 
-  // Renders the specific UI input element matching the field definition type
   const renderField = (field) => {
     const error = errors[field.key]
     const commonProps = {

@@ -5,13 +5,11 @@ const inputClassName =
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
 
-// Form component for configuring Gmail actions and triggers with OAuth connection controls
 function GmailConfigForm({ schema, value, errors = {}, onChange }) {
   const [connected, setConnected] = useState(false)
   const [email, setEmail] = useState('');
   const [connectionMessage, setConnectionMessage] = useState('')
 
-  // Updates a single field in the node configuration object
   const setField = (key, nextValue) =>
     onChange({ ...value, [key]: nextValue })
 
@@ -19,7 +17,6 @@ function GmailConfigForm({ schema, value, errors = {}, onChange }) {
   useEffect(() => {
     let active = true
 
-    // Fetches the active Gmail OAuth connection status and user email from the backend
     const loadConnectionStatus = async () => {
       try {
         const response = await fetch(`${API_URL}/api/v1/gmail/status`, {
@@ -40,7 +37,6 @@ function GmailConfigForm({ schema, value, errors = {}, onChange }) {
       }
     }
 
-    // Listens for postMessage callbacks from the OAuth popup dialog
     const handleOAuthMessage = (event) => {
       if (
         event.origin !== new URL(API_URL).origin ||
@@ -74,7 +70,6 @@ function GmailConfigForm({ schema, value, errors = {}, onChange }) {
     }
   }, [])
 
-  // Launches the Google OAuth authentication popup window
   const connectGmail = () => {
     const popup = window.open(
       `${API_URL}/api/v1/gmail/connect`,
@@ -89,7 +84,6 @@ function GmailConfigForm({ schema, value, errors = {}, onChange }) {
     }
   }
 
-  // Revokes the Gmail OAuth session and clears authenticated user details
   const disconnectGmail = async () => {
     try {
       const response = await fetch(`${API_URL}/api/v1/gmail/disconnect`, {

@@ -1,50 +1,59 @@
-import fs from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Octokit } from 'octokit';
+import {
+  disconnectIntegrationSession,
+  getIntegrationSession,
+  saveIntegrationSession,
+} from '../../db/integrationSessionRepository.js';
+import { upsertIntegrationConnection } from '../../db/workflowRepository.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSION_FILE = path.resolve(__dirname, '../../../.github_session.json');
 
-function loadSavedSession() {
-  try {
-    if (fs.existsSync(SESSION_FILE)) {
-      const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf-8'));
+let cachedOctokit = null;
+let userOAuthToken = null;
+let activeUser = null;
+
+export async function initializeGitHubSession() {
+  let session = await getIntegrationSession('github');
+  if (!session) {
+    try {
+      const data = JSON.parse(await readFile(SESSION_FILE, 'utf8'));
       if (data.token) {
-        return data;
+        await saveIntegrationSession('github', { token: data.token, scopes: data.scopes || [] }, data.user || {});
+        session = { payload: { token: data.token, scopes: data.scopes || [] }, user: data.user || {} };
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        if (err.message.includes('SESSION_ENCRYPTION_KEY')) throw err;
+        throw new Error('Could not import the existing GitHub session file', { cause: err });
       }
     }
-  } catch {
-    // Ignore
   }
-  return null;
+  if (session?.payload?.token) {
+    userOAuthToken = session.payload.token;
+    activeUser = session.user;
+    cachedOctokit = new Octokit({ auth: userOAuthToken });
+    await upsertIntegrationConnection('github', activeUser?.login, 'connected', session.payload.scopes || []);
+  }
 }
 
-const initialSession = loadSavedSession();
-let cachedOctokit = null;
-let userOAuthToken = initialSession?.token || null;
-let activeUser = initialSession?.user || null;
-
-export function setOAuthToken(token, user = null) {
+export async function setOAuthToken(token, user = null, scopes = []) {
+  await saveIntegrationSession('github', { token, scopes }, user || {});
+  await upsertIntegrationConnection('github', user?.login, 'connected', scopes);
   userOAuthToken = token;
   activeUser = user;
   cachedOctokit = new Octokit({ auth: token });
-  try {
-    fs.writeFileSync(SESSION_FILE, JSON.stringify({ token, user }, null, 2), 'utf-8');
-  } catch (err) {
-    console.warn('Could not persist GitHub session to file:', err.message);
-  }
 }
 
-export function clearOAuthToken() {
+export async function clearOAuthToken() {
+  await disconnectIntegrationSession('github');
+  await upsertIntegrationConnection('github', activeUser?.login, 'disconnected');
   userOAuthToken = null;
   activeUser = null;
   cachedOctokit = null;
-  try {
-    if (fs.existsSync(SESSION_FILE)) {
-      fs.unlinkSync(SESSION_FILE);
-    }
-  } catch {}
 }
 
 export function getActiveUser() {

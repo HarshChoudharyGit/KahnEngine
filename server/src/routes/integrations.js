@@ -140,7 +140,11 @@ export async function integrationRoutes(fastify) {
       const octokit = new Octokit({ auth: tokenData.access_token });
       const { data: user } = await octokit.rest.users.getAuthenticated();
 
-      setOAuthToken(tokenData.access_token, user);
+      await setOAuthToken(
+        tokenData.access_token,
+        user,
+        typeof tokenData.scope === 'string' ? tokenData.scope.split(' ') : [],
+      );
 
       reply.type('text/html').send(`
         <!DOCTYPE html>
@@ -168,15 +172,16 @@ export async function integrationRoutes(fastify) {
         </html>
       `);
     } catch (err) {
+      fastify.log.error({ code: err.code || 'UNKNOWN' }, 'GitHub OAuth exchange or session persistence failed');
       reply.type('text/html').send(`
         <!DOCTYPE html>
         <html>
           <body style="background:#100d0a;color:#e87979;font-family:sans-serif;padding:30px;text-align:center;">
-            <h3>OAuth Exchange Error</h3>
-            <p>${err.message}</p>
+            <h3>GitHub connection could not be completed</h3>
+            <p>Please retry. If this continues, check the server configuration.</p>
             <script>
               if (window.opener) {
-                window.opener.postMessage({ type: 'oauth-result', provider: 'github', connected: false, error: '${err.message}' }, '*');
+                window.opener.postMessage({ type: 'oauth-result', provider: 'github', connected: false, error: 'GitHub connection could not be completed' }, '*');
               }
               setTimeout(() => window.close(), 2500);
             </script>
@@ -188,7 +193,7 @@ export async function integrationRoutes(fastify) {
 
   // Disconnect GitHub
   fastify.post('/api/integrations/github/disconnect', async () => {
-    clearOAuthToken();
+    await clearOAuthToken();
     return {
       connected: false,
       message: 'GitHub account disconnected successfully.',

@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import { memoryStore } from '../store/memoryStore.js';
+import { createExecution, getWorkflow, listAllWorkflows } from '../db/workflowRepository.js';
 import { executeWorkflow } from '../engine/executor.js';
 import {
   pollGitHubOnce,
@@ -11,7 +11,7 @@ import {
 export async function webhookRoutes(fastify) {
   fastify.post('/api/v1/webhooks/:workflowId', async (request, reply) => {
     const { workflowId } = request.params;
-    const workflow = memoryStore.getWorkflow(workflowId);
+    const workflow = await getWorkflow(workflowId);
 
     if (!workflow) {
       return reply.code(404).send({
@@ -21,7 +21,7 @@ export async function webhookRoutes(fastify) {
     }
 
     const executionId = `exec_${nanoid(8)}`;
-    memoryStore.createExecution({
+    await createExecution({
       id: executionId,
       workflowId: workflow.id,
       workflowName: workflow.name,
@@ -29,7 +29,8 @@ export async function webhookRoutes(fastify) {
     });
 
     setImmediate(() => {
-      executeWorkflow(workflow, executionId, request.body || {});
+      void executeWorkflow(workflow, executionId, request.body || {})
+        .catch((err) => fastify.log.error({ err, executionId }, 'Webhook workflow execution failed unexpectedly'));
     });
 
     return reply.code(202).send({
@@ -57,7 +58,7 @@ export async function webhookRoutes(fastify) {
       date: headCommit?.timestamp || new Date().toISOString(),
     };
 
-    const workflows = memoryStore.listWorkflows().filter((wf) => {
+    const workflows = (await listAllWorkflows()).filter((wf) => {
       const nodes = wf.nodes || [];
       return nodes.some(
         (n) =>
@@ -69,7 +70,7 @@ export async function webhookRoutes(fastify) {
 
     const executionIds = [];
     for (const wf of workflows) {
-      const res = triggerCommitWorkflow(wf, commitData);
+      const res = await triggerCommitWorkflow(wf, commitData);
       executionIds.push(res.executionId);
     }
 
@@ -98,7 +99,7 @@ export async function webhookRoutes(fastify) {
 
   fastify.post('/api/v1/github/watcher/simulate', async (request) => {
     const body = request.body || {};
-    const result = simulateCommitPush(body);
+    const result = await simulateCommitPush(body);
     return {
       success: true,
       ...result,

@@ -58,7 +58,6 @@ const gmailTriggerConfig = {
     },
   ],
 
-  // Validates trigger filter parameters and optional sender email
   validate: (form) => {
     const errors = {};
 

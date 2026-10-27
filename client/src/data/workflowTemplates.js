@@ -1,7 +1,5 @@
 import { initialEdges, nodeOptions } from './editorData.js'
 
-
-//replace it with original templates from server/src/app.js
 const templates = [
   {
     id: 'github-email',
@@ -25,8 +23,6 @@ const templates = [
     connections: [[0, 1]],
   },
 ]
-
-//actual function to create workflow from template
 
 function createWorkflowFromTemplate(templateId) {
   const template = templates.find(({ id }) => id === templateId)
