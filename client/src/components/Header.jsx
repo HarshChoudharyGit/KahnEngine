@@ -10,7 +10,10 @@ const Header = ({
   isSaving = false,
   saveStatus = 'saved',
   isActive = false,
+  isTogglingActive = false,
   onToggleActive,
+  onReload,
+  isReloading = false,
   onDeleteWorkflow,
 }) => {
   const [isEditingTitle, setIsEditingTitle] = useState(false)
@@ -49,8 +52,9 @@ const Header = ({
               setTitleDraft(workflowTitle)
               setIsEditingTitle(true)
             }}
-            className="truncate rounded px-2 py-1.5 font-medium text-[#f0e5c9] transition hover:bg-[#d4ad58]/8"
+            className="truncate rounded px-2 py-1.5 font-medium text-[#f0e5c9] transition hover:bg-[#d4ad58]/8 cursor-pointer"
             aria-label="Edit workflow name"
+            title="Click to rename workflow"
           >
             {workflowTitle}
           </button>
@@ -58,7 +62,7 @@ const Header = ({
 
         <button
           type="button"
-          className="hidden items-center gap-1 rounded px-2 py-1.5 text-xs text-[#a9997b] transition hover:bg-[#d4ad58]/8 hover:text-[#e5d8b8] sm:flex"
+          className="hidden items-center gap-1 rounded px-2 py-1.5 text-xs text-[#a9997b] transition hover:bg-[#d4ad58]/8 hover:text-[#e5d8b8] cursor-pointer sm:flex"
         >
           <Plus aria-hidden="true" className="h-3.5 w-3.5" />
           Add tag
@@ -76,7 +80,7 @@ const Header = ({
             type="button"
             aria-pressed={activeTab === tab}
             onClick={() => onTabChange(tab)}
-            className={`rounded px-3 py-1.5 text-xs transition ${
+            className={`rounded px-3 py-1.5 text-xs transition cursor-pointer ${
               activeTab === tab
                 ? 'font-medium text-[#f0d58e] shadow-sm bg-[#d4ad58]/10'
                 : 'text-[#9d9076] hover:text-[#e5d8b8]'
@@ -92,12 +96,22 @@ const Header = ({
           <button
             type="button"
             onClick={onToggleActive}
-            className={`hidden items-center gap-2 text-xs transition md:flex ${
+            disabled={isTogglingActive}
+            className={`hidden items-center gap-2 text-xs transition md:flex cursor-pointer disabled:cursor-not-allowed ${
               isActive ? 'text-emerald-400' : 'text-[#b9aa8d] hover:text-[#f0d58e]'
             }`}
+            title={isActive ? 'Workflow is active (click to pause)' : 'Workflow is inactive (click to activate)'}
             aria-label={`Workflow is ${isActive ? 'active' : 'inactive'}`}
+            aria-pressed={isActive}
           >
-            {isActive ? 'Active' : 'Inactive'}
+            {isTogglingActive ? (
+              <span className="flex items-center gap-1 text-amber-300">
+                <LoaderCircle className="h-3 w-3 animate-spin text-[#d4ad58]" />
+                Updating…
+              </span>
+            ) : (
+              isActive ? 'Active' : 'Inactive'
+            )}
             <span className={`flex h-4.5 w-9 items-center rounded-full border px-0.5 transition ${
               isActive ? 'border-emerald-600 bg-emerald-950/60' : 'border-[#8e7139]/40 bg-[#2a2118]'
             }`}>
@@ -113,7 +127,8 @@ const Header = ({
             type="button"
             onClick={onSave}
             disabled={isSaving}
-            className="flex items-center gap-1.5 rounded-md border border-[#8e7139]/45 px-3 py-1.5 text-xs font-medium text-[#e5d8b8] transition hover:border-[#d4ad58]/70 hover:bg-[#d4ad58]/8 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md border border-[#8e7139]/45 px-3 py-1.5 text-xs font-medium text-[#e5d8b8] transition hover:border-[#d4ad58]/70 hover:bg-[#d4ad58]/8 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+            title="Save workflow (Ctrl+S)"
           >
             {isSaving ? (
               <LoaderCircle className="h-3 w-3 animate-spin text-[#d4ad58]" />
@@ -137,17 +152,22 @@ const Header = ({
 
         <button
           type="button"
-          aria-label="Undo"
-          className="hidden h-8 w-8 items-center justify-center rounded-md text-[#a9997b] transition hover:bg-[#d4ad58]/8 hover:text-[#f0d58e] sm:flex"
+          onClick={onReload}
+          disabled={isReloading}
+          aria-label="Reload workflow"
+          title="Reload workflow from backend"
+          className="hidden h-8 w-8 items-center justify-center rounded-md text-[#a9997b] transition hover:bg-[#d4ad58]/8 hover:text-[#f0d58e] disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed sm:flex"
         >
-          <RotateCcw aria-hidden="true" className="h-4 w-4" />
+          <RotateCcw aria-hidden="true" className={`h-4 w-4 ${isReloading ? 'animate-spin text-[#d4ad58]' : ''}`} />
         </button>
+
         <div className="relative">
           <button
             type="button"
             aria-label="More workflow options"
+            title="More options"
             onClick={() => setShowMenu((prev) => !prev)}
-            className="flex h-8 w-8 items-center justify-center rounded-md text-[#a9997b] transition hover:bg-[#d4ad58]/8 hover:text-[#f0d58e]"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-[#a9997b] transition hover:bg-[#d4ad58]/8 hover:text-[#f0d58e] cursor-pointer"
           >
             <MoreHorizontal aria-hidden="true" className="h-5 w-5" />
           </button>
@@ -162,7 +182,7 @@ const Header = ({
                       setShowMenu(false)
                       onDeleteWorkflow()
                     }}
-                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-[#d98a74] transition hover:bg-[#8f4d3b]/15"
+                    className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-[#d98a74] transition hover:bg-[#8f4d3b]/15 cursor-pointer"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                     Delete workflow

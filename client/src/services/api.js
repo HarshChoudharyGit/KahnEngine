@@ -47,6 +47,17 @@ export async function deleteWorkflow(id) {
   return data;
 }
 
+export async function deleteAllWorkflows() {
+  const res = await fetch(`${API_BASE_URL}/api/v1/workflows`, {
+    method: 'DELETE',
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to delete all workflows');
+  }
+  return data;
+}
+
 export async function executeWorkflow(workflowId, payload = {}) {
   const res = await fetch(`${API_BASE_URL}/api/v1/workflows/${workflowId}/execute`, {
     method: 'POST',

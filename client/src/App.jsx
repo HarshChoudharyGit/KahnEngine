@@ -5,7 +5,7 @@ import SideBar from './components/SideBar.jsx'
 import LandingPage from './pages/landing/LandingPage.jsx'
 import DashboardPage from './pages/dashboard/DashboardPage.jsx'
 import WorkflowCanvas from './components/WorkflowCanvas.jsx'
-import { getWorkflow, deleteWorkflow } from './services/api.js'
+import { getWorkflow, saveWorkflow, deleteWorkflow } from './services/api.js'
 
 function LandingRoute() {
   const navigate = useNavigate()
@@ -24,6 +24,8 @@ function Workspace() {
   const [saveStatus, setSaveStatus] = useState('saved')
   const [isSaving, setIsSaving] = useState(false)
   const [isActive, setIsActive] = useState(true)
+  const [isTogglingActive, setIsTogglingActive] = useState(false)
+  const [isReloading, setIsReloading] = useState(false)
   const saveActionRef = useRef(null)
   const navigate = useNavigate()
 
@@ -43,6 +45,7 @@ function Workspace() {
         if (wf) {
           setLoadedWorkflow(wf)
           if (wf.name) setWorkflowTitle(wf.name)
+          if (wf.status) setIsActive(wf.status === 'active' || wf.status === 'ACTIVE')
         }
       })
       .catch((err) => {
@@ -59,7 +62,62 @@ function Workspace() {
     return () => {
       isMounted = false
     }
-  }, [workflowIdParam])
+  }, [workflowIdParam, navigate])
+
+  const handleToggleActive = async () => {
+    if (isTogglingActive) return
+    const nextActive = !isActive
+    const nextStatus = nextActive ? 'active' : 'inactive'
+    setIsTogglingActive(true)
+    try {
+      if (workflowIdParam || loadedWorkflow?.id) {
+        await saveWorkflow({
+          ...(loadedWorkflow || {}),
+          id: workflowIdParam || loadedWorkflow?.id,
+          name: workflowTitle,
+          status: nextStatus,
+        })
+        setLoadedWorkflow((prev) => (prev ? { ...prev, status: nextStatus } : prev))
+      }
+      setIsActive(nextActive)
+      setSaveStatus('saved')
+    } catch (err) {
+      console.error('Failed to update workflow active status:', err)
+      alert(`Could not update active status: ${err.message}`)
+    } finally {
+      setIsTogglingActive(false)
+    }
+  }
+
+  const handleReloadWorkflow = async () => {
+    if (isReloading) return
+    setIsReloading(true)
+    try {
+      if (workflowIdParam) {
+        const fresh = await getWorkflow(workflowIdParam)
+        if (fresh) {
+          setLoadedWorkflow({
+            ...fresh,
+            revision: (loadedWorkflow?.revision || 0) + 1,
+          })
+          if (fresh.name) setWorkflowTitle(fresh.name)
+          if (fresh.status) setIsActive(fresh.status === 'active' || fresh.status === 'ACTIVE')
+          setSaveStatus('saved')
+        }
+      } else {
+        setSelectedTemplate((current) => ({
+          id: current?.id,
+          revision: (current?.revision ?? 0) + 1,
+        }))
+        setSaveStatus('saved')
+      }
+    } catch (err) {
+      console.error('Failed to reload workflow:', err)
+      alert(`Failed to reload workflow: ${err.message}`)
+    } finally {
+      setIsReloading(false)
+    }
+  }
 
   const handleDeleteWorkflow = async () => {
     if (!workflowIdParam) return
@@ -96,7 +154,10 @@ function Workspace() {
           isSaving={isSaving}
           saveStatus={saveStatus}
           isActive={isActive}
-          onToggleActive={() => setIsActive((prev) => !prev)}
+          isTogglingActive={isTogglingActive}
+          onToggleActive={handleToggleActive}
+          onReload={handleReloadWorkflow}
+          isReloading={isReloading}
           onDeleteWorkflow={workflowIdParam ? handleDeleteWorkflow : undefined}
         />
         {isLoadingWorkflow ? (

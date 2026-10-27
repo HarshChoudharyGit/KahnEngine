@@ -77,7 +77,7 @@ function VariablePicker({ fieldKey, onSelect, predecessorNodes = [] }) {
               type="button"
               onClick={() => onSelect(item.expr)}
               title={item.desc}
-              className="inline-flex items-center gap-1 rounded bg-[#1f1912] border border-[#8e7139]/30 px-1.5 py-0.5 text-[10px] font-mono text-[#e5cf9b] hover:border-[#c69b45] hover:bg-[#c69b45]/15 transition"
+              className="cursor-pointer inline-flex items-center gap-1 rounded bg-[#1f1912] border border-[#8e7139]/30 px-1.5 py-0.5 text-[10px] font-mono text-[#e5cf9b] hover:border-[#c69b45] hover:bg-[#c69b45]/15 transition"
             >
               <span>+</span>
               <span>{item.label}</span>
@@ -87,7 +87,7 @@ function VariablePicker({ fieldKey, onSelect, predecessorNodes = [] }) {
         <button
           type="button"
           onClick={() => setOpen(!open)}
-          className="text-[10px] text-[#c69b45] underline hover:text-[#f0e5c9] ml-auto"
+          className="cursor-pointer text-[10px] text-[#c69b45] underline hover:text-[#f0e5c9] ml-auto"
         >
           {open ? 'Hide options' : 'More...'}
         </button>
@@ -107,7 +107,7 @@ function VariablePicker({ fieldKey, onSelect, predecessorNodes = [] }) {
                       onSelect(it.expr)
                       setOpen(false)
                     }}
-                    className="flex flex-col text-left rounded bg-[#100d0a] border border-[#8e7139]/25 px-2 py-1 hover:border-[#c69b45] hover:bg-[#c69b45]/10"
+                    className="cursor-pointer flex flex-col text-left rounded bg-[#100d0a] border border-[#8e7139]/25 px-2 py-1 hover:border-[#c69b45] hover:bg-[#c69b45]/10"
                   >
                     <span className="text-[11px] font-mono text-[#f0e5c9]">{it.expr}</span>
                     <span className="text-[9px] text-[#8f8065]">{it.desc}</span>
@@ -278,7 +278,7 @@ function GmailConfigForm({ schema, value, errors = {}, onChange, node, nodes = [
                 <button
                   type="button"
                   onClick={disconnectGmail}
-                  className="mt-3 w-full rounded-md border border-red-900/50 px-3 py-2.5 text-xs text-red-300 hover:bg-red-950/30"
+                  className="mt-3 w-full cursor-pointer rounded-md border border-red-900/50 px-3 py-2.5 text-xs text-red-300 hover:bg-red-950/30"
                 >
                   Disconnect Gmail
                 </button>
@@ -286,7 +286,7 @@ function GmailConfigForm({ schema, value, errors = {}, onChange, node, nodes = [
                 <button
                   type="button"
                   onClick={connectGmail}
-                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-md border border-[#8e7139]/45 bg-[#c69b45]/10 px-3 py-2.5 text-xs font-medium text-[#f0e5c9] transition hover:border-[#c69b45] hover:bg-[#c69b45]/20"
+                  className="mt-3 flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-[#8e7139]/45 bg-[#c69b45]/10 px-3 py-2.5 text-xs font-medium text-[#f0e5c9] transition hover:border-[#c69b45] hover:bg-[#c69b45]/20"
                 >
                   <svg
                     viewBox="0 0 24 24"

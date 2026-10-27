@@ -23,7 +23,15 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react'
-import { listWorkflows, saveWorkflow, deleteWorkflow, listExecutions, fetchHealth } from '../../services/api.js'
+import {
+  listWorkflows,
+  saveWorkflow,
+  deleteWorkflow,
+  deleteAllWorkflows,
+  clearExecutionsApi,
+  listExecutions,
+  fetchHealth,
+} from '../../services/api.js'
 
 function formatRelativeTime(isoString) {
   if (!isoString) return 'Unknown'
@@ -69,7 +77,7 @@ function EmptyState({ onCreateNew }) {
       <button
         type="button"
         onClick={onCreateNew}
-        className="mt-6 inline-flex items-center gap-2 rounded-lg bg-[#c69b45] px-5 py-2.5 text-sm font-semibold text-[#21170c] shadow-md transition hover:bg-[#dfb95f] hover:shadow-lg active:scale-[0.98]"
+        className="mt-6 inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[#c69b45] px-5 py-2.5 text-sm font-semibold text-[#21170c] shadow-md transition hover:bg-[#dfb95f] hover:shadow-lg active:scale-[0.98]"
       >
         <Plus className="h-4 w-4" />
         Create your first workflow
@@ -106,7 +114,7 @@ function WorkflowCard({ workflow, executionCount, onOpen, onDuplicate, onDelete 
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu) }}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-[#a9997b] transition hover:bg-[#d4ad58]/10 hover:text-[#f0d58e]"
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-[#a9997b] transition hover:bg-[#d4ad58]/10 hover:text-[#f0d58e]"
           >
             <MoreHorizontal className="h-4 w-4" />
           </button>
@@ -118,7 +126,7 @@ function WorkflowCard({ workflow, executionCount, onOpen, onDuplicate, onDelete 
                 <button
                   type="button"
                   onClick={() => { setShowMenu(false); onOpen(workflow.id) }}
-                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-[#e5d8b8] transition hover:bg-[#d4ad58]/10"
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-xs text-[#e5d8b8] transition hover:bg-[#d4ad58]/10"
                 >
                   <ExternalLink className="h-3.5 w-3.5 text-[#d4ad58]" />
                   Open in editor
@@ -126,7 +134,7 @@ function WorkflowCard({ workflow, executionCount, onOpen, onDuplicate, onDelete 
                 <button
                   type="button"
                   onClick={() => { setShowMenu(false); onDuplicate(workflow) }}
-                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-[#e5d8b8] transition hover:bg-[#d4ad58]/10"
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-xs text-[#e5d8b8] transition hover:bg-[#d4ad58]/10"
                 >
                   <Copy className="h-3.5 w-3.5 text-[#c9b991]" />
                   Duplicate
@@ -135,7 +143,7 @@ function WorkflowCard({ workflow, executionCount, onOpen, onDuplicate, onDelete 
                 <button
                   type="button"
                   onClick={() => { setShowMenu(false); onDelete(workflow.id, workflow.name) }}
-                  className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-[#d98a74] transition hover:bg-[#8f4d3b]/15"
+                  className="flex w-full cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-xs text-[#d98a74] transition hover:bg-[#8f4d3b]/15"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                   Delete workflow
@@ -257,14 +265,14 @@ function CreateWorkflowModal({ isOpen, onClose, onCreated }) {
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-[#8e7139]/35 px-4 py-2 text-xs font-medium text-[#c9b991] transition hover:bg-[#d4ad58]/8"
+              className="cursor-pointer rounded-lg border border-[#8e7139]/35 px-4 py-2 text-xs font-medium text-[#c9b991] transition hover:bg-[#d4ad58]/8"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isCreating}
-              className="inline-flex items-center gap-2 rounded-lg bg-[#c69b45] px-4 py-2 text-xs font-semibold text-[#21170c] transition hover:bg-[#dfb95f] disabled:opacity-60"
+              className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[#c69b45] px-4 py-2 text-xs font-semibold text-[#21170c] transition hover:bg-[#dfb95f] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isCreating ? (
                 <>
@@ -298,6 +306,9 @@ function DashboardPage() {
   const [deleteConfirm, setDeleteConfirm] = useState(null) // { id, name }
   const [isDeleting, setIsDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState(null)
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false)
+  const [isDeletingAll, setIsDeletingAll] = useState(false)
+  const [deleteAllError, setDeleteAllError] = useState(null)
 
   const loadData = useCallback(async (showRefreshIndicator = false) => {
     if (showRefreshIndicator) setIsRefreshing(true)
@@ -379,6 +390,40 @@ function DashboardPage() {
     }
   }
 
+  const handleDeleteAllConfirm = async () => {
+    if (isDeletingAll) return
+    setIsDeletingAll(true)
+    setDeleteAllError(null)
+    try {
+      await deleteAllWorkflows()
+      setWorkflows([])
+      setShowDeleteAllModal(false)
+      await loadData(true)
+    } catch (err) {
+      console.error('Failed to delete all workflows:', err)
+      // Fallback: try individual deletions
+      try {
+        await Promise.allSettled(workflows.map((w) => deleteWorkflow(w.id)))
+        setWorkflows([])
+        setShowDeleteAllModal(false)
+        await loadData(true)
+      } catch (fallbackErr) {
+        setDeleteAllError(err.message || 'Failed to delete all workflows')
+      }
+    } finally {
+      setIsDeletingAll(false)
+    }
+  }
+
+  const handleClearExecutions = async () => {
+    try {
+      await clearExecutionsApi()
+      setExecutions([])
+    } catch (err) {
+      console.error('Failed to clear executions:', err)
+    }
+  }
+
   // Compute per-workflow execution counts
   const executionCountMap = {}
   for (const exec of executions) {
@@ -418,7 +463,7 @@ function DashboardPage() {
             <button
               type="button"
               onClick={() => navigate('/')}
-              className="flex items-center gap-2 text-[#f0d58e] transition hover:opacity-80"
+              className="flex cursor-pointer items-center gap-2 text-[#f0d58e] transition hover:opacity-80"
             >
               <LayoutDashboard className="h-5 w-5" />
               <span className="font-display text-base font-semibold tracking-wide hidden sm:block">
@@ -431,16 +476,14 @@ function DashboardPage() {
 
           <div className="flex items-center gap-3">
             {/* Server status indicator */}
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium ${
-              serverStatus === 'online'
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium ${serverStatus === 'online'
                 ? 'bg-emerald-950/50 text-emerald-300 border border-emerald-800/40'
                 : serverStatus === 'offline'
-                ? 'bg-rose-950/50 text-rose-300 border border-rose-800/40'
-                : 'bg-amber-950/50 text-amber-300 border border-amber-800/40'
-            }`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${
-                serverStatus === 'online' ? 'bg-emerald-400' : serverStatus === 'offline' ? 'bg-rose-400' : 'bg-amber-400 animate-pulse'
-              }`} />
+                  ? 'bg-rose-950/50 text-rose-300 border border-rose-800/40'
+                  : 'bg-amber-950/50 text-amber-300 border border-amber-800/40'
+              }`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${serverStatus === 'online' ? 'bg-emerald-400' : serverStatus === 'offline' ? 'bg-rose-400' : 'bg-amber-400 animate-pulse'
+                }`} />
               {serverStatus === 'online' ? 'API Online' : serverStatus === 'offline' ? 'API Offline' : 'Checking…'}
             </span>
 
@@ -448,7 +491,7 @@ function DashboardPage() {
               type="button"
               onClick={() => loadData(true)}
               disabled={isRefreshing}
-              className="flex h-8 w-8 items-center justify-center rounded-md border border-[#8e7139]/30 text-[#c9b991] transition hover:border-[#d4ad58]/50 hover:text-[#f0d58e] disabled:opacity-50"
+              className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-[#8e7139]/30 text-[#c9b991] transition hover:border-[#d4ad58]/50 hover:text-[#f0d58e] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
             </button>
@@ -456,7 +499,7 @@ function DashboardPage() {
             <button
               type="button"
               onClick={handleCreateNew}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-[#c69b45] px-3.5 py-2 text-xs font-semibold text-[#21170c] shadow-md transition hover:bg-[#dfb95f] active:scale-[0.98]"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-[#c69b45] px-3.5 py-2 text-xs font-semibold text-[#21170c] shadow-md transition hover:bg-[#dfb95f] active:scale-[0.98]"
             >
               <Plus className="h-3.5 w-3.5" />
               <span className="hidden sm:block">New Workflow</span>
@@ -498,9 +541,23 @@ function DashboardPage() {
               />
             </div>
 
-            <span className="text-xs text-[#88795e]">
-              {filteredWorkflows.length} of {workflows.length} workflow{workflows.length !== 1 ? 's' : ''}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-[#88795e]">
+                {filteredWorkflows.length} of {workflows.length} workflow{workflows.length !== 1 ? 's' : ''}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteAllError(null)
+                  setShowDeleteAllModal(true)
+                }}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-rose-800/40 bg-rose-950/25 px-3 py-1.5 text-xs font-medium text-rose-300 shadow-sm transition hover:border-rose-600 hover:bg-rose-900/40 hover:text-rose-100 active:scale-[0.98]"
+                title="Delete all workflows"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+                <span>Delete All</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -548,13 +605,24 @@ function DashboardPage() {
                 <Activity className="h-4 w-4 text-[#d4ad58]" />
                 Recent Executions
               </h2>
-              <button
-                type="button"
-                onClick={() => navigate('/workspace')}
-                className="text-xs text-[#d4ad58] transition hover:text-[#f0d58e]"
-              >
-                View all →
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleClearExecutions}
+                  className="inline-flex items-center gap-1 text-xs text-[#88795e] transition hover:text-rose-300"
+                  title="Clear execution history"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  Clear all
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/workspace')}
+                  className="text-xs text-[#d4ad58] transition hover:text-[#f0d58e]"
+                >
+                  View all →
+                </button>
+              </div>
             </div>
 
             <div className="overflow-hidden rounded-xl border border-[#8e7139]/25 bg-[#17120e]">
@@ -579,15 +647,14 @@ function DashboardPage() {
                         <td className="px-4 py-3 font-mono text-[#e5d8b8]">{exec.id}</td>
                         <td className="px-4 py-3 text-[#9d9076] hidden sm:table-cell">{exec.workflowName || exec.workflowId || '—'}</td>
                         <td className="px-4 py-3">
-                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase ${
-                            isRunning
+                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase ${isRunning
                               ? 'bg-amber-950/50 text-[#d4ad58]'
                               : isFailed
-                              ? 'bg-rose-950/50 text-rose-300'
-                              : isSuccess
-                              ? 'bg-emerald-950/50 text-emerald-300'
-                              : 'bg-[#8e7139]/15 text-[#c9b991]'
-                          }`}>
+                                ? 'bg-rose-950/50 text-rose-300'
+                                : isSuccess
+                                  ? 'bg-emerald-950/50 text-emerald-300'
+                                  : 'bg-[#8e7139]/15 text-[#c9b991]'
+                            }`}>
                             {isRunning ? (
                               <Loader2 className="h-2.5 w-2.5 animate-spin" />
                             ) : isFailed ? (
@@ -644,7 +711,7 @@ function DashboardPage() {
                 type="button"
                 disabled={isDeleting}
                 onClick={() => setDeleteConfirm(null)}
-                className="rounded-lg border border-[#8e7139]/35 px-4 py-2 text-xs font-medium text-[#c9b991] transition hover:bg-[#d4ad58]/8 disabled:opacity-50"
+                className="cursor-pointer rounded-lg border border-[#8e7139]/35 px-4 py-2 text-xs font-medium text-[#c9b991] transition hover:bg-[#d4ad58]/8 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -652,9 +719,70 @@ function DashboardPage() {
                 type="button"
                 disabled={isDeleting}
                 onClick={handleDeleteConfirm}
-                className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-500 disabled:opacity-50 inline-flex items-center gap-1.5"
+                className="cursor-pointer rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-50 inline-flex items-center gap-1.5"
               >
                 {isDeleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete All Confirmation Dialog */}
+      {showDeleteAllModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          onMouseDown={(e) => { if (e.target === e.currentTarget && !isDeletingAll) setShowDeleteAllModal(false) }}
+        >
+          <div className="w-full max-w-md rounded-xl border border-rose-800/50 bg-[#17120e] p-6 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-rose-800/40 bg-rose-950/50 text-rose-400">
+                <Trash2 className="h-5 w-5" />
+              </span>
+              <div>
+                <h3 className="text-base font-semibold text-[#f0e5c9]">Delete all workflows?</h3>
+                <p className="text-xs text-[#88795e]">This is a destructive action</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-[#a9997b] leading-6">
+              You are about to permanently delete all <strong className="text-rose-300 font-semibold">{workflows.length} workflows</strong>,
+              including all execution logs, node run history, and scheduled cron triggers.
+              <span className="mt-1 block text-rose-400/90 font-medium">This action cannot be undone.</span>
+            </p>
+
+            {deleteAllError && (
+              <p className="mt-3 rounded-lg border border-rose-800/40 bg-rose-950/40 p-2.5 text-xs text-rose-300">
+                {deleteAllError}
+              </p>
+            )}
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                disabled={isDeletingAll}
+                onClick={() => setShowDeleteAllModal(false)}
+                className="rounded-lg border border-[#8e7139]/35 px-4 py-2 text-xs font-medium text-[#c9b991] transition hover:bg-[#d4ad58]/8 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingAll}
+                onClick={handleDeleteAllConfirm}
+                className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white shadow-lg transition hover:bg-rose-500 disabled:opacity-50"
+              >
+                {isDeletingAll ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-white" />
+                    <span>Deleting {workflows.length} workflows…</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Yes, delete all</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

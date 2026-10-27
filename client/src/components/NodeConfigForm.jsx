@@ -47,7 +47,7 @@ function NodeConfigForm({ schema, value, errors, onChange }) {
               type="button"
               aria-label={`Remove ${field.label.toLowerCase()} row ${index + 1}`}
               onClick={() => setField(field.key, rows.filter((_, rowIndex) => rowIndex !== index))}
-              className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded text-[#a9997b] transition hover:bg-[#8f4d3b]/15 hover:text-[#e18a7a]"
+              className="mt-1 flex h-8 w-8 cursor-pointer shrink-0 items-center justify-center rounded text-[#a9997b] transition hover:bg-[#8f4d3b]/15 hover:text-[#e18a7a]"
             >
               <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
             </button>
@@ -56,7 +56,7 @@ function NodeConfigForm({ schema, value, errors, onChange }) {
         <button
           type="button"
           onClick={() => setField(field.key, [...rows, { key: '', value: '' }])}
-          className="inline-flex items-center gap-1.5 rounded px-1 py-1 text-xs text-[#d4ad58] transition hover:text-[#f0d58e]"
+          className="inline-flex cursor-pointer items-center gap-1.5 rounded px-1 py-1 text-xs text-[#d4ad58] transition hover:text-[#f0d58e]"
         >
           <Plus aria-hidden="true" className="h-3.5 w-3.5" />
           Add {field.label.toLowerCase().replace(/s$/, '')}
@@ -92,7 +92,7 @@ function NodeConfigForm({ schema, value, errors, onChange }) {
           <button
             type="button"
             onClick={() => setIntegrationNotice(`${integrationName} is not connected. No connection was made.`)}
-            className="mt-3 w-full rounded-md border border-[#8e7139]/40 px-3 py-2 text-xs font-medium text-[#f0d58e] transition hover:border-[#c69b45] hover:bg-[#d4ad58]/8"
+            className="mt-3 w-full cursor-pointer rounded-md border border-[#8e7139]/40 px-3 py-2 text-xs font-medium text-[#f0d58e] transition hover:border-[#c69b45] hover:bg-[#d4ad58]/8"
           >
             Connect {integrationName}
           </button>
@@ -153,7 +153,7 @@ function NodeConfigForm({ schema, value, errors, onChange }) {
       input = <textarea {...commonProps} rows={field.rows ?? 3} placeholder={field.placeholder} />
     } else if (field.type === 'select') {
       input = (
-        <select {...commonProps}>
+        <select {...commonProps} className={`${inputClassName} cursor-pointer`}>
           {field.options.map((option) => (
             <option key={option.value} value={option.value}>{option.label}</option>
           ))}

@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid';
 import {
   clearExecutions,
   createExecution,
+  deleteAllWorkflows,
   deleteWorkflow,
   getExecution,
   getWorkflow,
@@ -114,6 +115,17 @@ export async function workflowRoutes(fastify) {
       workflow: saved,
       topologicalOrder: validation.topologicalOrder.map((n) => n.id),
     });
+  });
+
+  // Delete all workflows
+  fastify.delete('/api/v1/workflows', async (request, reply) => {
+    try {
+      const count = await deleteAllWorkflows();
+      return { success: true, message: `Deleted ${count} workflows successfully`, count };
+    } catch (err) {
+      request.log.error({ err }, 'Failed to delete all workflows');
+      return reply.code(500).send({ success: false, error: err.message || 'Failed to delete all workflows' });
+    }
   });
 
   // Delete single workflow

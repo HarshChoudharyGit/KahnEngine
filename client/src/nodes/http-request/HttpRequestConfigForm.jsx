@@ -176,7 +176,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
                     type="button"
                     aria-label={`Remove ${label.toLowerCase()} row ${index + 1}`}
                     onClick={() => removeRow(index)}
-                    className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded text-[#a9997b] transition hover:bg-[#8f4d3b]/15 hover:text-[#e18a7a]"
+                    className="mt-1 flex h-8 w-8 cursor-pointer shrink-0 items-center justify-center rounded text-[#a9997b] transition hover:bg-[#8f4d3b]/15 hover:text-[#e18a7a]"
                   >
                     <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
                   </button>
@@ -189,7 +189,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
         <button
           type="button"
           onClick={() => addRow()}
-          className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-[#d4ad58] transition hover:bg-[#d4ad58]/10 hover:text-[#f0d58e]"
+          className="inline-flex cursor-pointer items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-[#d4ad58] transition hover:bg-[#d4ad58]/10 hover:text-[#f0d58e]"
         >
           <Plus aria-hidden="true" className="h-3.5 w-3.5" />
           Add row
@@ -372,7 +372,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
                 type="button"
                 aria-label="Clear URL"
                 onClick={() => setField('url', '')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-[#756b5a] hover:text-[#e18a7a]"
+                className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer text-[#756b5a] hover:text-[#e18a7a]"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -388,7 +388,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
               setActiveTab('test')
               void runTestRequest()
             }}
-            className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-[#8e7139]/40 bg-[#251c14] px-3 text-xs font-medium text-[#f0d58e] shadow-sm transition hover:border-[#c69b45] hover:bg-[#34271c] disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-[#8e7139]/40 bg-[#251c14] px-3 text-xs font-medium text-[#f0d58e] shadow-sm transition hover:border-[#c69b45] hover:bg-[#34271c] disabled:cursor-not-allowed disabled:opacity-40"
           >
             {isTesting ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin text-[#c69b45]" />
@@ -414,7 +414,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
               key={varName}
               type="button"
               onClick={() => insertVariable('url', varName)}
-              className="rounded bg-[#1f1812] px-1.5 py-0.5 text-[10px] font-mono text-[#d4ad58] transition hover:bg-[#2e2319] hover:text-[#f0d58e]"
+              className="cursor-pointer rounded bg-[#1f1812] px-1.5 py-0.5 text-[10px] font-mono text-[#d4ad58] transition hover:bg-[#2e2319] hover:text-[#f0d58e]"
             >
               + {varName}
             </button>
@@ -427,7 +427,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
         <button
           type="button"
           onClick={() => setActiveTab('params')}
-          className={`flex items-center gap-1.5 border-b-2 px-3 py-2 font-medium transition ${activeTab === 'params'
+          className={`flex cursor-pointer items-center gap-1.5 border-b-2 px-3 py-2 font-medium transition ${activeTab === 'params'
             ? 'border-[#c69b45] text-[#f0d58e]'
             : 'border-transparent text-[#9f927b] hover:text-[#e5d8b8]'
             }`}
@@ -444,7 +444,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
         <button
           type="button"
           onClick={() => setActiveTab('headers')}
-          className={`flex items-center gap-1.5 border-b-2 px-3 py-2 font-medium transition ${activeTab === 'headers'
+          className={`flex cursor-pointer items-center gap-1.5 border-b-2 px-3 py-2 font-medium transition ${activeTab === 'headers'
             ? 'border-[#c69b45] text-[#f0d58e]'
             : 'border-transparent text-[#9f927b] hover:text-[#e5d8b8]'
             }`}
@@ -461,7 +461,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
         <button
           type="button"
           onClick={() => setActiveTab('auth')}
-          className={`flex items-center gap-1.5 border-b-2 px-3 py-2 font-medium transition ${activeTab === 'auth'
+          className={`flex cursor-pointer items-center gap-1.5 border-b-2 px-3 py-2 font-medium transition ${activeTab === 'auth'
             ? 'border-[#c69b45] text-[#f0d58e]'
             : 'border-transparent text-[#9f927b] hover:text-[#e5d8b8]'
             }`}
@@ -476,7 +476,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
         <button
           type="button"
           onClick={() => setActiveTab('body')}
-          className={`flex items-center gap-1.5 border-b-2 px-3 py-2 font-medium transition ${activeTab === 'body'
+          className={`flex cursor-pointer items-center gap-1.5 border-b-2 px-3 py-2 font-medium transition ${activeTab === 'body'
             ? 'border-[#c69b45] text-[#f0d58e]'
             : 'border-transparent text-[#9f927b] hover:text-[#e5d8b8]'
             }`}
@@ -491,7 +491,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
         <button
           type="button"
           onClick={() => setActiveTab('test')}
-          className={`flex items-center gap-1.5 border-b-2 px-3 py-2 font-medium transition ${activeTab === 'test'
+          className={`flex cursor-pointer items-center gap-1.5 border-b-2 px-3 py-2 font-medium transition ${activeTab === 'test'
             ? 'border-[#c69b45] text-[#f0d58e]'
             : 'border-transparent text-[#9f927b] hover:text-[#e5d8b8]'
             }`}
@@ -536,7 +536,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
               id="http-auth-type"
               value={currentAuth}
               onChange={(e) => setField('authentication', e.target.value)}
-              className="mt-1.5 w-full rounded-md border border-[#8e7139]/35 bg-[#100d0a] px-3 py-2.5 text-xs text-[#f0e5c9] outline-none transition focus:border-[#c69b45]"
+              className="mt-1.5 w-full cursor-pointer rounded-md border border-[#8e7139]/35 bg-[#100d0a] px-3 py-2.5 text-xs text-[#f0e5c9] outline-none transition focus:border-[#c69b45]"
             >
               <option value="none">No authentication</option>
               <option value="bearer">Bearer Token (Authorization: Bearer …)</option>
@@ -564,7 +564,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
                 <button
                   type="button"
                   onClick={() => setShowBearerToken(!showBearerToken)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#756b5a] hover:text-[#c9b991]"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 cursor-pointer text-[#756b5a] hover:text-[#c9b991]"
                 >
                   {showBearerToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                 </button>
@@ -702,7 +702,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
                 type="button"
                 onClick={formatJsonBody}
                 disabled={!currentBody.trim()}
-                className="rounded border border-[#8e7139]/30 px-2 py-0.5 text-[11px] text-[#d4ad58] hover:border-[#c69b45] disabled:opacity-40"
+                className="cursor-pointer rounded border border-[#8e7139]/30 px-2 py-0.5 text-[11px] text-[#d4ad58] hover:border-[#c69b45] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Format JSON
               </button>
@@ -750,7 +750,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
               type="button"
               disabled={isTesting || !currentUrl.trim()}
               onClick={() => void runTestRequest()}
-              className="flex items-center gap-1.5 rounded-md bg-[#c69b45] px-3 py-1.5 text-xs font-semibold text-[#21170c] transition hover:bg-[#dfb95f] disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex cursor-pointer items-center gap-1.5 rounded-md bg-[#c69b45] px-3 py-1.5 text-xs font-semibold text-[#21170c] transition hover:bg-[#dfb95f] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isTesting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
               <span>{isTesting ? 'Sending…' : 'Execute Test'}</span>
@@ -797,7 +797,7 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
                     setCopiedResponse(true)
                     setTimeout(() => setCopiedResponse(false), 2000)
                   }}
-                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-[#d4ad58] hover:text-[#f0d58e]"
+                  className="flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-[#d4ad58] hover:text-[#f0d58e]"
                 >
                   {copiedResponse ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
                   <span>{copiedResponse ? 'Copied' : 'Copy'}</span>

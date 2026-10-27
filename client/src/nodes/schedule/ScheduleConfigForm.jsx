@@ -316,7 +316,7 @@ export default function ScheduleConfigForm({ value = {}, errors = {}, onChange }
         <button
           type="button"
           onClick={() => setField('enabled', !enabled)}
-          className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+          className={`cursor-pointer rounded-lg px-3 py-1.5 text-xs font-medium transition ${
             enabled
               ? 'border border-amber-500/30 bg-amber-500/10 text-[#f0d58e] hover:bg-amber-500/20'
               : 'border border-emerald-500/30 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25'
@@ -340,7 +340,7 @@ export default function ScheduleConfigForm({ value = {}, errors = {}, onChange }
                 key={mode.id}
                 type="button"
                 onClick={() => setMode(mode.id)}
-                className={`flex flex-col items-center justify-center gap-1 rounded-lg py-2 px-1 text-center transition ${
+                className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg py-2 px-1 text-center transition ${
                   isActive
                     ? 'border border-[#d4ad58]/60 bg-[#c69b45] text-[#21170c] font-bold shadow-md'
                     : 'text-[#c9b991] hover:bg-white/5 hover:text-[#f0e5c9]'
@@ -575,7 +575,7 @@ export default function ScheduleConfigForm({ value = {}, errors = {}, onChange }
                       key={day.id}
                       type="button"
                       onClick={() => toggleWeekday(day.id)}
-                      className={`flex flex-col items-center justify-center rounded-lg py-2 transition ${
+                      className={`flex cursor-pointer flex-col items-center justify-center rounded-lg py-2 transition ${
                         selected
                           ? 'border border-[#d4ad58] bg-[#c69b45] text-[#21170c] font-bold shadow'
                           : 'border border-[#8e7139]/30 bg-[#100d0a] text-[#a9997b] hover:text-[#f0e5c9] hover:border-[#8e7139]'
@@ -830,7 +830,7 @@ export default function ScheduleConfigForm({ value = {}, errors = {}, onChange }
           <button
             type="button"
             onClick={handleCopyCron}
-            className="flex items-center gap-1 text-[11px] text-[#a9997b] transition hover:text-[#f0d58e] shrink-0"
+            className="flex cursor-pointer items-center gap-1 text-[11px] text-[#a9997b] transition hover:text-[#f0d58e] shrink-0"
             title="Copy cron expression"
           >
             {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
@@ -901,7 +901,7 @@ export default function ScheduleConfigForm({ value = {}, errors = {}, onChange }
             onClick={handleTestRunNow}
             disabled={isTesting}
             title="Immediately trigger workflow execution starting at this Schedule Trigger"
-            className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-[#c69b45]/50 bg-[#c69b45]/20 px-3.5 py-2.5 text-xs font-bold text-[#f0d58e] transition hover:bg-[#c69b45]/30 hover:border-[#c69b45] disabled:opacity-50 shadow-sm"
+            className="flex-1 flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-[#c69b45]/50 bg-[#c69b45]/20 px-3.5 py-2.5 text-xs font-bold text-[#f0d58e] transition hover:bg-[#c69b45]/30 hover:border-[#c69b45] disabled:cursor-not-allowed disabled:opacity-50 shadow-sm"
           >
             {isTesting ? (
               <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -915,7 +915,7 @@ export default function ScheduleConfigForm({ value = {}, errors = {}, onChange }
             type="button"
             onClick={handleRegisterOnBackend}
             disabled={isSyncing || !isCurrentCronValid}
-            className="flex items-center justify-center gap-1.5 rounded-lg border border-[#8e7139]/50 bg-[#251e15] px-3.5 py-2.5 text-xs font-medium text-[#f0d58e] shadow transition hover:bg-[#342718] hover:border-[#d4ad58] disabled:opacity-50"
+            className="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#8e7139]/50 bg-[#251e15] px-3.5 py-2.5 text-xs font-medium text-[#f0d58e] shadow transition hover:bg-[#342718] hover:border-[#d4ad58] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isSyncing ? (
               <LoaderCircle className="h-4 w-4 animate-spin text-[#d4ad58]" />

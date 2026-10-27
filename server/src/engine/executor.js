@@ -27,179 +27,197 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
   const { nodes = [], edges = [] } = workflow;
   const executionStartMs = Date.now();
 
-  // 1. Validate DAG with Kahn's algorithm
-  const kahnResult = runKahnsAlgorithm(nodes, edges);
-  if (!kahnResult.isValid) {
-    const errorMsg = kahnResult.error || 'Cycle detected in graph';
-    await updateExecution(executionId, {
-      status: 'FAILED',
-      error: errorMsg,
-      completedAt: new Date().toISOString(),
-      durationMs: Date.now() - executionStartMs,
-    });
-
-    memoryStore.broadcastTelemetry(executionId, 'execution_failed', {
-      executionId,
-      error: errorMsg,
-      cycleNodes: kahnResult.cycleNodes,
-    });
-
-
-    return;
-  }
-
-  // Mark execution as RUNNING
-  // Node context storage (passing outputs between nodes)
-  const context = {
-    executionId,
-    trigger: triggerPayload,
-    outputs: {},
-    nodes: {},
-  };
-
-  await startExecution(executionId, nodes);
-  memoryStore.broadcastTelemetry(executionId, 'execution_started', {
-    executionId,
-    workflowId: workflow.id,
-    topologicalOrder: kahnResult.topologicalOrder.map((n) => n.id),
-  });
-
-  // 2. Execute nodes sequentially in topological order
-  for (let i = 0; i < kahnResult.topologicalOrder.length; i++) {
-    const node = kahnResult.topologicalOrder[i];
-    const nodeId = node.id;
-    const nodeLabel = node.data?.title || node.data?.label || nodeId;
-    const nodeType = (node.data?.configType || node.data?.type || node.type || 'default').toLowerCase();
-    const nodeStartMs = Date.now();
-
-    const incomingEdges = (edges || []).filter((e) => e.target === nodeId);
-    const predecessorNodeIds = incomingEdges.map((e) => e.source);
-    node._incomingEdges = incomingEdges;
-    node._predecessorIds = predecessorNodeIds;
-
-    await startNodeExecution(executionId, {
-      nodeId,
-      nodeType,
-      input: {
-        nodeTitle: nodeLabel,
-        trigger: context.trigger,
-        outputs: context.outputs,
-        nodes: context.nodes,
-      },
-    });
-
-    // Broadcast node RUNNING
-    memoryStore.broadcastTelemetry(executionId, 'node_status', {
-      nodeId,
-      status: 'RUNNING',
-      stepIndex: i + 1,
-      totalSteps: kahnResult.topologicalOrder.length,
-      timestamp: Date.now(),
-    });
-
-    let logQueue = Promise.resolve();
-    let logPersistenceError = null;
-    const log = (message, level = 'INFO') => {
-      const entry = sanitizeLogEntry({ nodeId, nodeTitle: nodeLabel, level, message, timestamp: Date.now() });
-      logQueue = logQueue
-        .then(() => appendLog(executionId, entry))
-        .catch((err) => {
-          logPersistenceError ||= err;
-        });
-      memoryStore.broadcastTelemetry(executionId, 'node_log', entry);
-      return logQueue;
-    };
-
-    log(`[Step ${i + 1}/${kahnResult.topologicalOrder.length}] Starting: "${nodeLabel}" (${nodeType})`);
-
-    try {
-      const result = await executeSingleNode(node, context, log);
-      await logQueue;
-      if (logPersistenceError) {
-        throw new Error('Could not persist workflow execution log', { cause: logPersistenceError });
-      }
-      const durationMs = Date.now() - nodeStartMs;
-      context.outputs[nodeId] = result;
-      context.nodes[nodeId] = {
-        id: nodeId,
-        type: nodeType,
-        title: nodeLabel,
-        configType: node.data?.configType || nodeType,
-        output: result,
-      };
-
-      // Broadcast node SUCCESS
-      await finishNodeExecution(executionId, {
-        nodeId,
-        status: 'completed',
-        output: result,
-      });
-
-      memoryStore.broadcastTelemetry(executionId, 'node_status', {
-        nodeId,
-        status: 'SUCCESS',
-        durationMs,
-        timestamp: Date.now(),
-      });
-      log(`Node "${nodeLabel}" completed successfully in ${durationMs}ms.`);
-      await logQueue;
-      if (logPersistenceError) {
-        throw new Error('Could not persist workflow execution log', { cause: logPersistenceError });
-      }
-    } catch (err) {
-      await logQueue;
-      const durationMs = Date.now() - nodeStartMs;
-      const totalDurationMs = Date.now() - executionStartMs;
-
-      // Broadcast node FAILED
-      await finishNodeExecution(executionId, {
-        nodeId,
-        status: 'failed',
-        output: null,
-        error: err.message,
-      });
+  try {
+    // 1. Validate DAG with Kahn's algorithm
+    const kahnResult = runKahnsAlgorithm(nodes, edges);
+    if (!kahnResult.isValid) {
+      const errorMsg = kahnResult.error || 'Cycle detected in graph';
       await updateExecution(executionId, {
         status: 'FAILED',
-        error: err.message,
+        error: errorMsg,
         completedAt: new Date().toISOString(),
-        durationMs: totalDurationMs,
+        durationMs: Date.now() - executionStartMs,
       });
-
-      memoryStore.broadcastTelemetry(executionId, 'node_status', {
-        nodeId,
-        status: 'FAILED',
-        error: err.message,
-        durationMs,
-        timestamp: Date.now(),
-      });
-      log(`Node "${nodeLabel}" failed: ${err.message}`, 'ERROR');
-      await logQueue;
-      if (logPersistenceError) {
-        throw new Error('Could not persist workflow execution log', { cause: logPersistenceError });
-      }
 
       memoryStore.broadcastTelemetry(executionId, 'execution_failed', {
         executionId,
-        failedNodeId: nodeId,
-        error: err.message,
-        durationMs: totalDurationMs,
+        error: errorMsg,
+        cycleNodes: kahnResult.cycleNodes,
+        durationMs: Date.now() - executionStartMs,
       });
       return;
     }
-  }
 
-  // All nodes succeeded
-  const totalDurationMs = Date.now() - executionStartMs;
-  await updateExecution(executionId, {
-    status: 'SUCCESS',
-    completedAt: new Date().toISOString(),
-    durationMs: totalDurationMs,
-  });
-  memoryStore.broadcastTelemetry(executionId, 'execution_completed', {
-    executionId,
-    status: 'SUCCESS',
-    durationMs: totalDurationMs,
-  });
+    // Mark execution as RUNNING
+    // Node context storage (passing outputs between nodes)
+    const context = {
+      executionId,
+      trigger: triggerPayload,
+      outputs: {},
+      nodes: {},
+    };
+
+    await startExecution(executionId, nodes);
+    memoryStore.broadcastTelemetry(executionId, 'execution_started', {
+      executionId,
+      workflowId: workflow.id,
+      topologicalOrder: kahnResult.topologicalOrder.map((n) => n.id),
+    });
+
+    // 2. Execute nodes sequentially in topological order
+    for (let i = 0; i < kahnResult.topologicalOrder.length; i++) {
+      const node = kahnResult.topologicalOrder[i];
+      const nodeId = node.id;
+      const nodeLabel = node.data?.title || node.data?.label || nodeId;
+      const nodeType = (node.data?.configType || node.data?.type || node.type || 'default').toLowerCase();
+      const nodeStartMs = Date.now();
+
+      const incomingEdges = (edges || []).filter((e) => e.target === nodeId);
+      const predecessorNodeIds = incomingEdges.map((e) => e.source);
+      node._incomingEdges = incomingEdges;
+      node._predecessorIds = predecessorNodeIds;
+
+      await startNodeExecution(executionId, {
+        nodeId,
+        nodeType,
+        input: {
+          nodeTitle: nodeLabel,
+          trigger: context.trigger,
+          outputs: context.outputs,
+          nodes: context.nodes,
+        },
+      });
+
+      // Broadcast node RUNNING
+      memoryStore.broadcastTelemetry(executionId, 'node_status', {
+        nodeId,
+        status: 'RUNNING',
+        stepIndex: i + 1,
+        totalSteps: kahnResult.topologicalOrder.length,
+        timestamp: Date.now(),
+      });
+
+      let logQueue = Promise.resolve();
+      let logPersistenceError = null;
+      const log = (message, level = 'INFO') => {
+        const entry = sanitizeLogEntry({ nodeId, nodeTitle: nodeLabel, level, message, timestamp: Date.now() });
+        logQueue = logQueue
+          .then(() => appendLog(executionId, entry))
+          .catch((err) => {
+            logPersistenceError ||= err;
+          });
+        memoryStore.broadcastTelemetry(executionId, 'node_log', entry);
+        return logQueue;
+      };
+
+      log(`[Step ${i + 1}/${kahnResult.topologicalOrder.length}] Starting: "${nodeLabel}" (${nodeType})`);
+
+      try {
+        const result = await executeSingleNode(node, context, log);
+        await logQueue;
+        if (logPersistenceError) {
+          throw new Error('Could not persist workflow execution log', { cause: logPersistenceError });
+        }
+        const durationMs = Date.now() - nodeStartMs;
+        context.outputs[nodeId] = result;
+        context.nodes[nodeId] = {
+          id: nodeId,
+          type: nodeType,
+          title: nodeLabel,
+          configType: node.data?.configType || nodeType,
+          output: result,
+        };
+
+        // Broadcast node SUCCESS
+        await finishNodeExecution(executionId, {
+          nodeId,
+          status: 'completed',
+          output: result,
+        });
+
+        memoryStore.broadcastTelemetry(executionId, 'node_status', {
+          nodeId,
+          status: 'SUCCESS',
+          durationMs,
+          timestamp: Date.now(),
+        });
+        log(`Node "${nodeLabel}" completed successfully in ${durationMs}ms.`);
+        await logQueue;
+        if (logPersistenceError) {
+          throw new Error('Could not persist workflow execution log', { cause: logPersistenceError });
+        }
+      } catch (err) {
+        await logQueue;
+        const durationMs = Date.now() - nodeStartMs;
+        const totalDurationMs = Date.now() - executionStartMs;
+
+        // Broadcast node FAILED
+        await finishNodeExecution(executionId, {
+          nodeId,
+          status: 'failed',
+          output: null,
+          error: err.message,
+        });
+        await updateExecution(executionId, {
+          status: 'FAILED',
+          error: err.message,
+          completedAt: new Date().toISOString(),
+          durationMs: totalDurationMs,
+        });
+
+        memoryStore.broadcastTelemetry(executionId, 'node_status', {
+          nodeId,
+          status: 'FAILED',
+          error: err.message,
+          durationMs,
+          timestamp: Date.now(),
+        });
+        log(`Node "${nodeLabel}" failed: ${err.message}`, 'ERROR');
+        await logQueue;
+        if (logPersistenceError) {
+          throw new Error('Could not persist workflow execution log', { cause: logPersistenceError });
+        }
+
+        memoryStore.broadcastTelemetry(executionId, 'execution_failed', {
+          executionId,
+          failedNodeId: nodeId,
+          error: err.message,
+          durationMs: totalDurationMs,
+        });
+        return;
+      }
+    }
+
+    // All nodes succeeded
+    const totalDurationMs = Date.now() - executionStartMs;
+    await updateExecution(executionId, {
+      status: 'SUCCESS',
+      completedAt: new Date().toISOString(),
+      durationMs: totalDurationMs,
+    });
+    memoryStore.broadcastTelemetry(executionId, 'execution_completed', {
+      executionId,
+      status: 'SUCCESS',
+      durationMs: totalDurationMs,
+    });
+  } catch (fatalErr) {
+    const totalDurationMs = Date.now() - executionStartMs;
+    try {
+      await updateExecution(executionId, {
+        status: 'FAILED',
+        error: fatalErr.message,
+        completedAt: new Date().toISOString(),
+        durationMs: totalDurationMs,
+      });
+    } catch {
+      // Ignore secondary update error
+    }
+    memoryStore.broadcastTelemetry(executionId, 'execution_failed', {
+      executionId,
+      error: fatalErr.message,
+      durationMs: totalDurationMs,
+    });
+  }
 }
 
 /**

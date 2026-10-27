@@ -91,7 +91,7 @@ function ExecutionHistory({
                 type="button"
                 onClick={onRefreshHistory}
                 disabled={isRefreshing}
-                className="inline-flex items-center gap-1.5 rounded-md border border-[#8e7139]/40 bg-[#17120e] px-3 py-2 text-xs text-[#c9b991] transition hover:bg-[#d4ad58]/10 hover:text-[#f0d58e] disabled:opacity-50"
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[#8e7139]/40 bg-[#17120e] px-3 py-2 text-xs text-[#c9b991] transition hover:bg-[#d4ad58]/10 hover:text-[#f0d58e] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                 Refresh
@@ -101,7 +101,7 @@ function ExecutionHistory({
               <button
                 type="button"
                 onClick={onClearHistory}
-                className="inline-flex items-center gap-2 rounded-md border border-[#8f4d3b]/40 px-3 py-2 text-xs text-[#d98a74] transition hover:bg-[#8f4d3b]/10"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-[#8f4d3b]/40 px-3 py-2 text-xs text-[#d98a74] transition hover:bg-[#8f4d3b]/10"
               >
                 <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
                 Clear history
@@ -148,7 +148,7 @@ function ExecutionHistory({
                         type="button"
                         onClick={() => onSelectExecution(execution.id)}
                         aria-pressed={isSelected}
-                        className={`w-full px-4 py-3.5 text-left transition ${
+                        className={`w-full cursor-pointer px-4 py-3.5 text-left transition ${
                           isSelected ? 'bg-[#d4ad58]/12 border-l-2 border-[#d4ad58]' : 'hover:bg-[#d4ad58]/5'
                         }`}
                       >
@@ -276,7 +276,7 @@ function ExecutionHistory({
                           key={id}
                           type="button"
                           onClick={() => setActiveView(id)}
-                          className={`rounded px-2.5 py-1 text-xs transition ${
+                          className={`cursor-pointer rounded px-2.5 py-1 text-xs transition ${
                             activeView === id ? 'bg-[#d4ad58]/20 font-medium text-[#f0d58e]' : 'text-[#88795e] hover:text-[#e5d8b8]'
                           }`}
                         >
@@ -289,7 +289,7 @@ function ExecutionHistory({
                       <button
                         type="button"
                         onClick={copyExecutionLogs}
-                        className="inline-flex items-center gap-1 text-xs text-[#a9997b] hover:text-[#f0d58e] transition"
+                        className="inline-flex cursor-pointer items-center gap-1 text-xs text-[#a9997b] hover:text-[#f0d58e] transition"
                       >
                         <Copy className="h-3 w-3" />
                         {copiedLog ? 'Copied!' : 'Copy raw log'}
@@ -324,7 +324,7 @@ function ExecutionHistory({
                                 <button
                                   type="button"
                                   onClick={() => toggleStepExpanded(step.nodeId)}
-                                  className="w-full flex items-center justify-between p-3 text-left transition hover:bg-[#1a140f]"
+                                  className="w-full cursor-pointer flex items-center justify-between p-3 text-left transition hover:bg-[#1a140f]"
                                 >
                                   <div className="flex items-center gap-3 min-w-0">
                                     <span

@@ -23,6 +23,7 @@ import {
   LoaderCircle,
   Plus,
   Radio,
+  RotateCcw,
   Sparkles,
   Trash2,
   X,
@@ -36,6 +37,7 @@ import {
   connectTelemetryStream,
   clearExecutionsApi,
   executeWorkflow,
+  getExecution,
   listExecutions,
   saveWorkflow,
 } from '../services/api.js'
@@ -68,8 +70,8 @@ function WorkflowNode({ id, data, selected }) {
     <div className={`workflow-node${selected ? ' is-selected' : ''}${status === 'running' ? ' is-running shadow-[0_0_15px_rgba(212,173,88,0.35)] ring-1 ring-[#d4ad58]' : status === 'success' ? ' ring-1 ring-emerald-500/40' : status === 'error' ? ' ring-1 ring-rose-500/40' : ''}`}>
       <NodeResizer
         isVisible={selected}
-        minWidth={180}
-        minHeight={84}
+        minWidth={164}
+        minHeight={68}
         maxWidth={520}
         maxHeight={320}
         color="#d4ad58"
@@ -83,7 +85,7 @@ function WorkflowNode({ id, data, selected }) {
       )}
       <div className="workflow-node__main">
         <span className="workflow-node__icon" style={{ color: data.accent, borderColor: `${data.accent}55` }}>
-          <NodeIcon aria-hidden="true" className="h-4 w-4" />
+          <NodeIcon aria-hidden="true" className="h-3.5 w-3.5" />
         </span>
         <div className="workflow-node__copy">
           <span className="workflow-node__title">{data.title}</span>
@@ -196,6 +198,7 @@ function WorkflowEditor({
   )
   const nextNodeId = useRef(initialCanvasNodes.length + 10)
   const activeStreamCloseRef = useRef(null)
+  const activePollingRef = useRef(null)
   const { screenToFlowPosition, fitView } = useReactFlow()
   const selectedNode = nodes.find((node) => node.id === selectedNodeId)
 
@@ -267,6 +270,9 @@ function WorkflowEditor({
     return () => {
       if (activeStreamCloseRef.current) {
         activeStreamCloseRef.current()
+      }
+      if (activePollingRef.current) {
+        clearInterval(activePollingRef.current)
       }
     }
   }, [refreshHistory])
@@ -464,10 +470,81 @@ function WorkflowEditor({
       setSelectedExecutionId(executionId)
       setActiveTelemetryStats({ executionId, status: 'RUNNING', activeNode: null })
 
-      // Clean up any existing stream
+      // Clean up any existing stream & safety poller
       if (activeStreamCloseRef.current) {
         activeStreamCloseRef.current()
+        activeStreamCloseRef.current = null
       }
+      if (activePollingRef.current) {
+        clearInterval(activePollingRef.current)
+        activePollingRef.current = null
+      }
+
+      const clearSafetyPoll = () => {
+        if (activePollingRef.current) {
+          clearInterval(activePollingRef.current)
+          activePollingRef.current = null
+        }
+      }
+
+      // Safety polling interval: ensures the UI transitions to complete even if an SSE event was missed
+      activePollingRef.current = setInterval(async () => {
+        try {
+          const exec = await getExecution(executionId)
+          if (!exec) return
+
+          const normStatus = String(exec.status || '').toUpperCase()
+          if (normStatus === 'SUCCESS' || normStatus === 'COMPLETED') {
+            clearSafetyPoll()
+            if (activeStreamCloseRef.current) {
+              activeStreamCloseRef.current()
+              activeStreamCloseRef.current = null
+            }
+            setExecutionStatus('complete')
+            setActiveTelemetryStats(null)
+            setExecutions((prev) =>
+              prev.map((item) =>
+                item.id === executionId
+                  ? {
+                    ...item,
+                    status: 'complete',
+                    finishedAt: exec.completedAt || new Date().toISOString(),
+                    durationMs: exec.durationMs ?? (item.durationMs || 0),
+                  }
+                  : item,
+              ),
+            )
+          } else if (normStatus === 'FAILED') {
+            clearSafetyPoll()
+            if (activeStreamCloseRef.current) {
+              activeStreamCloseRef.current()
+              activeStreamCloseRef.current = null
+            }
+            setExecutionStatus('failed')
+            setActiveTelemetryStats(null)
+            setWorkflowNotice({
+              type: 'error',
+              title: 'Workflow run failed',
+              message: exec.error || 'The workflow stopped before it could complete.',
+            })
+            setExecutions((prev) =>
+              prev.map((item) =>
+                item.id === executionId
+                  ? {
+                    ...item,
+                    status: 'failed',
+                    error: exec.error,
+                    finishedAt: exec.completedAt || new Date().toISOString(),
+                    durationMs: exec.durationMs ?? (item.durationMs || 0),
+                  }
+                  : item,
+              ),
+            )
+          }
+        } catch {
+          // Ignore transient poll error
+        }
+      }, 1000)
 
       // Connect to SSE Telemetry stream
       const closeStream = connectTelemetryStream(executionId, {
@@ -544,6 +621,7 @@ function WorkflowEditor({
           )
         },
         onCompleted: ({ durationMs }) => {
+          clearSafetyPoll()
           setExecutionStatus('complete')
           setActiveTelemetryStats(null)
           setExecutions((prev) =>
@@ -560,6 +638,7 @@ function WorkflowEditor({
           )
         },
         onFailed: ({ error, durationMs }) => {
+          clearSafetyPoll()
           setExecutionStatus('failed')
           setActiveTelemetryStats(null)
           setWorkflowNotice({
@@ -581,8 +660,24 @@ function WorkflowEditor({
             ),
           )
         },
-        onError: () => {
-          // SSE stream closed
+        onError: async () => {
+          // SSE stream connection issue: verify state via execution API
+          try {
+            const exec = await getExecution(executionId)
+            if (!exec) return
+            const normStatus = String(exec.status || '').toUpperCase()
+            if (normStatus === 'SUCCESS' || normStatus === 'COMPLETED') {
+              clearSafetyPoll()
+              setExecutionStatus('complete')
+              setActiveTelemetryStats(null)
+            } else if (normStatus === 'FAILED') {
+              clearSafetyPoll()
+              setExecutionStatus('failed')
+              setActiveTelemetryStats(null)
+            }
+          } catch {
+            // Keep poll active
+          }
         },
       })
 
@@ -746,18 +841,18 @@ function WorkflowEditor({
               role="alert"
               aria-labelledby="workflow-notice-title"
               className={`absolute left-1/2 top-4 z-30 w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 overflow-hidden rounded-xl border shadow-2xl backdrop-blur-xl ${workflowNotice.type === 'error'
-                  ? 'border-rose-500/35 bg-[#241713]/[.97]'
-                  : workflowNotice.type === 'cycle'
-                    ? 'border-amber-500/35 bg-[#251d12]/[.97]'
-                    : 'border-[#8e7139]/45 bg-[#201a12]/[.98]'
+                ? 'border-rose-500/35 bg-[#241713]/[.97]'
+                : workflowNotice.type === 'cycle'
+                  ? 'border-amber-500/35 bg-[#251d12]/[.97]'
+                  : 'border-[#8e7139]/45 bg-[#201a12]/[.98]'
                 }`}
             >
               <div className="flex items-start gap-3 px-4 py-3.5">
                 <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${workflowNotice.type === 'error'
-                    ? 'bg-rose-500/10 text-rose-300'
-                    : workflowNotice.type === 'cycle'
-                      ? 'bg-amber-500/10 text-amber-300'
-                      : 'bg-[#d4ad58]/10 text-[#e2bd67]'
+                  ? 'bg-rose-500/10 text-rose-300'
+                  : workflowNotice.type === 'cycle'
+                    ? 'bg-amber-500/10 text-amber-300'
+                    : 'bg-[#d4ad58]/10 text-[#e2bd67]'
                   }`}>
                   <AlertCircle aria-hidden="true" className="h-4 w-4" />
                 </span>
@@ -825,7 +920,7 @@ function WorkflowEditor({
                 type="button"
                 role="menuitem"
                 onClick={deleteContextItem}
-                className="flex w-full items-center gap-2 rounded px-3 py-2 text-left text-xs text-[#d98a74] transition hover:bg-[#8f4d3b]/15"
+                className="flex w-full cursor-pointer items-center gap-2 rounded px-3 py-2 text-left text-xs text-[#d98a74] transition hover:bg-[#8f4d3b]/15"
               >
                 <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
                 Delete {contextMenu.type}
@@ -838,7 +933,7 @@ function WorkflowEditor({
             <button
               type="button"
               onClick={() => fitView({ padding: 0.2, duration: 350 })}
-              className="rounded-md border border-[#8e7139]/35 bg-[#17120e]/95 px-3 py-2 text-xs text-[#c9b991] shadow-lg transition hover:border-[#d4ad58]/65 hover:text-[#f0d58e]"
+              className="cursor-pointer rounded-md border border-[#8e7139]/35 bg-[#17120e]/95 px-3 py-2 text-xs text-[#c9b991] shadow-lg transition hover:border-[#d4ad58]/65 hover:text-[#f0d58e]"
             >
               Fit workflow
             </button>
@@ -871,7 +966,7 @@ function WorkflowEditor({
             aria-label="Add a node"
             aria-expanded={pickerOpen}
             onClick={() => setPickerOpen((open) => !open)}
-            className="absolute right-5 top-5 z-10 flex h-10 w-10 items-center justify-center rounded-md border border-[#8e7139]/50 bg-[#17120e]/95 text-xl text-[#d4ad58] shadow-lg transition hover:border-[#d4ad58] hover:bg-[#241b13]"
+            className="absolute right-5 top-5 z-10 flex h-10 w-10 cursor-pointer items-center justify-center rounded-md border border-[#8e7139]/50 bg-[#17120e]/95 text-xl text-[#d4ad58] shadow-lg transition hover:border-[#d4ad58] hover:bg-[#241b13]"
           >
             {pickerOpen ? <X aria-hidden="true" className="h-5 w-5" /> : <Plus aria-hidden="true" className="h-5 w-5" />}
           </button>
@@ -901,12 +996,22 @@ function WorkflowEditor({
               type="button"
               onClick={handleRun}
               disabled={executionStatus === 'running' || nodes.length === 0}
-              className="flex items-center gap-2 rounded-md bg-[#c69b45] px-4 py-2 text-sm font-semibold text-[#21170c] transition hover:bg-[#dfb95f] disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex cursor-pointer items-center gap-2 rounded-md bg-[#c69b45] px-4 py-2 text-sm font-semibold text-[#21170c] transition hover:bg-[#dfb95f] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {executionStatus === 'running' ? (
                 <>
                   <LoaderCircle className="h-4 w-4 animate-spin text-[#21170c]" />
                   <span>Executing ({activeTelemetryStats?.activeNode || 'Pipeline'})…</span>
+                </>
+              ) : executionStatus === 'complete' ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4 text-[#21170c]" />
+                  <span>Run again</span>
+                </>
+              ) : executionStatus === 'failed' ? (
+                <>
+                  <RotateCcw className="h-4 w-4 text-[#21170c]" />
+                  <span>Retry workflow</span>
                 </>
               ) : (
                 <>
@@ -916,12 +1021,29 @@ function WorkflowEditor({
               )}
             </button>
 
+            {executionStatus === 'running' && (
+              <button
+                type="button"
+                title="Reset execution state if stuck"
+                onClick={() => {
+                  if (activeStreamCloseRef.current) activeStreamCloseRef.current()
+                  if (activePollingRef.current) clearInterval(activePollingRef.current)
+                  setExecutionStatus('idle')
+                  setActiveTelemetryStats(null)
+                }}
+                className="flex cursor-pointer items-center gap-1 rounded-md border border-[#8e7139]/40 bg-[#251e16] px-2.5 py-2 text-xs font-medium text-[#d98a74] transition hover:bg-[#8f4d3b]/20 hover:text-[#f2a28d]"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Reset
+              </button>
+            )}
+
             <button
               type="button"
               aria-label="Clear workflow"
               onClick={clearWorkflow}
               disabled={executionStatus === 'running'}
-              className="flex h-9 w-9 items-center justify-center rounded-md text-[#a9997b] transition hover:bg-[#d4ad58]/10 hover:text-[#f0d58e] disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-md text-[#a9997b] transition hover:bg-[#d4ad58]/10 hover:text-[#f0d58e] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Trash2 aria-hidden="true" className="h-4 w-4" />
             </button>
@@ -950,7 +1072,7 @@ function WorkflowCanvas({
   setIsSaving,
   saveActionRef,
 }) {
-  const providerKey = `${selectedTemplate?.id || 'notpl'}_${selectedTemplate?.revision || 0}_${loadedWorkflow?.id || 'nowf'}`
+  const providerKey = `${selectedTemplate?.id || 'notpl'}_${selectedTemplate?.revision || 0}_${loadedWorkflow?.id || 'nowf'}_${loadedWorkflow?.revision || 0}`
   return (
     <ReactFlowProvider key={providerKey}>
       <WorkflowEditor

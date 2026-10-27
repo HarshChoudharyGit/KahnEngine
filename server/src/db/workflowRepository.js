@@ -305,6 +305,24 @@ export async function deleteWorkflow(id) {
   }
 }
 
+// Deletes all workflows and cascades associated executions and schedules
+export async function deleteAllWorkflows() {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM workflow_executions');
+    await client.query('DELETE FROM workflow_schedules');
+    const { rowCount } = await client.query('DELETE FROM workflows');
+    await client.query('COMMIT');
+    return rowCount;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // Creates a new execution record for a workflow
 export async function createExecution(record) {
   const { rows } = await pool.query(
