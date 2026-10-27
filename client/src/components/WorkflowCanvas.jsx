@@ -183,7 +183,7 @@ function WorkflowEditor({
   const [contextMenu, setContextMenu] = useState(null)
   const [selectedNodeId, setSelectedNodeId] = useState(null)
   const [executionStatus, setExecutionStatus] = useState('idle') // 'idle' | 'running' | 'complete' | 'failed'
-  const [cycleWarning, setCycleWarning] = useState('')
+  const [workflowNotice, setWorkflowNotice] = useState(null)
   const [executions, setExecutions] = useState([])
   const [selectedExecutionId, setSelectedExecutionId] = useState(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -357,13 +357,17 @@ function WorkflowEditor({
     // 2. Run Kahn's Algorithm validation
     const kahnResult = runKahnsAlgorithm(nodes, candidateEdges)
     if (!kahnResult.isValid) {
-      setCycleWarning(
-        `Cycle rejected by Kahn's Algorithm! Adding connection "${connection.source}" → "${connection.target}" creates an infinite execution cycle (${kahnResult.cycleNodes?.join(' ⇄ ')}).`,
-      )
+      const sourceTitle = nodes.find((node) => node.id === connection.source)?.data?.title ?? connection.source
+      const targetTitle = nodes.find((node) => node.id === connection.target)?.data?.title ?? connection.target
+      setWorkflowNotice({
+        type: 'cycle',
+        title: 'Connection would create a cycle',
+        message: `The connection from “${sourceTitle}” to “${targetTitle}” was not added because it would make the workflow loop back on itself.`,
+      })
       return
     }
 
-    setCycleWarning('')
+    setWorkflowNotice(null)
     setEdges((currentEdges) => addEdge(candidateEdge, currentEdges))
     setSaveStatus?.('unsaved')
   }
@@ -371,12 +375,17 @@ function WorkflowEditor({
   // Real Run Dispatch with SSE Telemetry Streaming
   const handleRun = async () => {
     if (executionStatus === 'running' || nodes.length === 0) return
-    setCycleWarning('')
+    setWorkflowNotice(null)
 
-    // Client-side Kahn's Algorithm DAG check
     const validation = runKahnsAlgorithm(nodes, edges)
     if (!validation.isValid) {
-      setCycleWarning(`Cannot execute workflow: ${validation.error}`)
+      const cycleNodeTitles = validation.cycleNodes
+        .map((nodeId) => nodes.find((node) => node.id === nodeId)?.data?.title ?? nodeId)
+      setWorkflowNotice({
+        type: 'cycle',
+        title: 'Workflow contains a cycle',
+        message: `A loop was found involving ${cycleNodeTitles.join(', ')}. Remove or reconnect an edge before running the workflow.`,
+      })
       return
     }
 
@@ -393,9 +402,11 @@ function WorkflowEditor({
           },
         })),
       )
-      setCycleWarning(configurationErrors
-        .map(({ nodeTitle, messages }) => `${nodeTitle}: ${messages.join(' ')}`)
-        .join(' '))
+      setWorkflowNotice({
+        type: 'validation',
+        title: 'Fix these settings before running',
+        issues: configurationErrors,
+      })
       return
     }
 
@@ -549,6 +560,11 @@ function WorkflowEditor({
         onFailed: ({ error, durationMs }) => {
           setExecutionStatus('failed')
           setActiveTelemetryStats(null)
+          setWorkflowNotice({
+            type: 'error',
+            title: 'Workflow run failed',
+            message: error || 'The workflow stopped before it could complete.',
+          })
           setExecutions((prev) =>
             prev.map((item) =>
               item.id === executionId
@@ -572,7 +588,38 @@ function WorkflowEditor({
     } catch (err) {
       console.error('Execution dispatch failed:', err)
       setExecutionStatus('failed')
-      setCycleWarning(`Fastify gateway execution failed: ${err.message}`)
+      if (Array.isArray(err.nodeErrors) && err.nodeErrors.length > 0) {
+        setNodes((currentNodes) =>
+          currentNodes.map((node) => ({
+            ...node,
+            data: {
+              ...node.data,
+              configurationStatus: err.nodeErrors.some((issue) => issue.nodeId === node.id)
+                ? 'error'
+                : node.data.configurationStatus,
+            },
+          })),
+        )
+        setWorkflowNotice({
+          type: 'validation',
+          title: 'Fix these settings before running',
+          issues: err.nodeErrors,
+        })
+      } else if (Array.isArray(err.cycleNodes) && err.cycleNodes.length > 0) {
+        const cycleNodeTitles = err.cycleNodes
+          .map((nodeId) => nodes.find((node) => node.id === nodeId)?.data?.title ?? nodeId)
+        setWorkflowNotice({
+          type: 'cycle',
+          title: 'Workflow contains a cycle',
+          message: `A loop was found involving ${cycleNodeTitles.join(', ')}. Remove or reconnect an edge before running the workflow.`,
+        })
+      } else {
+        setWorkflowNotice({
+          type: 'error',
+          title: 'Workflow could not start',
+          message: err.message || 'The workflow could not be sent for execution. Please try again.',
+        })
+      }
     }
   }
 
@@ -692,22 +739,78 @@ function WorkflowEditor({
             />
           </ReactFlow>
 
-          {/* Cycle Detection Floating Toast */}
-          {cycleWarning && (
-            <div className="absolute top-5 left-1/2 -translate-x-1/2 z-30 max-w-xl rounded-lg border border-amber-600/60 bg-[#25170d]/95 p-3.5 shadow-2xl backdrop-blur-md flex items-start gap-3 text-xs text-[#f5d089]">
-              <AlertCircle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
-              <div className="flex-1">
-                <p className="font-semibold text-[#f0e5c9]">Kahn&apos;s Algorithm Cycle Prevention</p>
-                <p className="mt-0.5 leading-relaxed text-[#dec69e]">{cycleWarning}</p>
+          {workflowNotice && (
+            <section
+              role="alert"
+              aria-labelledby="workflow-notice-title"
+              className={`absolute left-1/2 top-4 z-30 w-[min(36rem,calc(100%-2rem))] -translate-x-1/2 overflow-hidden rounded-xl border shadow-2xl backdrop-blur-xl ${
+                workflowNotice.type === 'error'
+                  ? 'border-rose-500/35 bg-[#241713]/[.97]'
+                  : workflowNotice.type === 'cycle'
+                    ? 'border-amber-500/35 bg-[#251d12]/[.97]'
+                    : 'border-[#8e7139]/45 bg-[#201a12]/[.98]'
+              }`}
+            >
+              <div className="flex items-start gap-3 px-4 py-3.5">
+                <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                  workflowNotice.type === 'error'
+                    ? 'bg-rose-500/10 text-rose-300'
+                    : workflowNotice.type === 'cycle'
+                      ? 'bg-amber-500/10 text-amber-300'
+                      : 'bg-[#d4ad58]/10 text-[#e2bd67]'
+                }`}>
+                  <AlertCircle aria-hidden="true" className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h2 id="workflow-notice-title" className="text-sm font-semibold text-[#f0e5c9]">
+                    {workflowNotice.title}
+                  </h2>
+                  {workflowNotice.message && (
+                    <p className="mt-1 text-xs leading-relaxed text-[#c9b991]">{workflowNotice.message}</p>
+                  )}
+                  {workflowNotice.issues && (
+                    <div className="mt-3 max-h-[min(52vh,26rem)] space-y-3 overflow-y-auto pr-1">
+                      <p className="text-[11px] text-[#a9997b]">
+                        {workflowNotice.issues.length} {workflowNotice.issues.length === 1 ? 'node needs' : 'nodes need'} attention. Open a node to review its specific errors.
+                      </p>
+                      {workflowNotice.issues.map(({ nodeId, nodeTitle, messages }) => (
+                        <div key={nodeId} className="rounded-lg border border-white/8 bg-black/15 px-3 py-2.5">
+                          <div className="flex items-center justify-between gap-3">
+                            <h3 className="truncate text-xs font-semibold text-[#e8d6ac]">{nodeTitle}</h3>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedNodeId(nodeId)
+                                setWorkflowNotice(null)
+                              }}
+                              className="shrink-0 rounded px-2 py-1 text-[11px] font-medium text-[#e2bd67] transition hover:bg-[#d4ad58]/10 hover:text-[#f0d58e]"
+                            >
+                              Configure
+                            </button>
+                          </div>
+                          <ul className="mt-2 space-y-1.5">
+                            {messages.map((message, index) => (
+                              <li key={`${nodeId}-${index}`} className="flex gap-2 text-xs leading-relaxed text-[#c9b991]">
+                                <span aria-hidden="true" className="mt-[0.45rem] h-1 w-1 shrink-0 rounded-full bg-[#d4ad58]" />
+                                <span>{message}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  aria-label="Dismiss workflow message"
+                  onClick={() => setWorkflowNotice(null)}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#a9997b] transition hover:bg-white/5 hover:text-[#f0e5c9]"
+                >
+                  <X aria-hidden="true" className="h-4 w-4" />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setCycleWarning('')}
-                className="text-[#a9997b] hover:text-[#f0e5c9]"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+            </section>
           )}
 
           {/* Context Menu */}

@@ -55,7 +55,10 @@ export async function executeWorkflow(workflowId, payload = {}) {
   });
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.error || 'Execution dispatch failed');
+    const error = new Error(data.error || 'Execution dispatch failed');
+    error.nodeErrors = data.nodeErrors;
+    error.cycleNodes = data.cycleNodes;
+    throw error;
   }
   return data;
 }
