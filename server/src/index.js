@@ -2,12 +2,14 @@ import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { workflowRoutes } from './routes/workflows.js';
+import { scheduleRoutes } from './routes/schedules.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { telemetryRoutes } from './routes/telemetry.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { gmailRoutes } from './routes/gmail.js';
 import { aiWorkflowRoutes } from './routes/aiWorkflow.js';
 import { startGitHubWatcher, stopGitHubWatcher } from './services/githubWatcher.js';
+import { initializeScheduler, stopScheduler } from './services/scheduleService.js';
 import { closeDB, connectDB } from './db/db.js';
 import { runMigrations } from './db/migrate.js';
 import { initializeGitHubSession } from './engine/agent/octokitClient.js';
@@ -23,7 +25,7 @@ const fastify = Fastify({
 await fastify.register(cors, {
   origin: true,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 });
 
 fastify.get('/health', async () => ({
@@ -33,6 +35,7 @@ fastify.get('/health', async () => ({
 }));
 
 await fastify.register(workflowRoutes);
+await fastify.register(scheduleRoutes);
 await fastify.register(webhookRoutes);
 await fastify.register(telemetryRoutes);
 await fastify.register(integrationRoutes);
@@ -41,6 +44,7 @@ await fastify.register(aiWorkflowRoutes);
 
 fastify.addHook('onClose', async () => {
   stopGitHubWatcher();
+  stopScheduler();
   await closeDB();
 });
 
@@ -64,6 +68,7 @@ try {
   await initializeGmailSession();
   await fastify.listen({ port, host });
   startGitHubWatcher(10000);
+  await initializeScheduler();
 } catch (err) {
   fastify.log.error({
     message: err.message,

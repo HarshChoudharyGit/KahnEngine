@@ -501,10 +501,12 @@ async function executeSingleNode(node, context, log) {
     }
 
     case 'crontrigger':
-    case 'cron': {
-      const schedule = config.schedule || '0 9 * * 1-5';
-      log(`Cron trigger evaluated on schedule: ${schedule}`);
-      return { triggeredAt: new Date().toISOString(), schedule };
+    case 'cron':
+    case 'scheduletrigger': {
+      const schedule = config.schedule || config.cronExpression || '0 9 * * 1-5';
+      const timezone = config.timezone || 'Asia/Kolkata';
+      log(`Cron trigger evaluated on schedule: ${schedule} (${timezone})`);
+      return { triggeredAt: new Date().toISOString(), schedule, timezone };
     }
 
     case 'wait':

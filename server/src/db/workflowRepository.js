@@ -1,4 +1,10 @@
 import { pool } from './db.js';
+import { memoryStore } from '../store/memoryStore.js';
+import {
+  syncWorkflowSchedules,
+  removeWorkflowSchedules,
+  stopScheduler,
+} from '../services/scheduleService.js';
 
 // Matches standard RFC 4122 UUID strings
 const UUID_PATTERN = /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i;
@@ -114,27 +120,30 @@ async function syncSchedules(client, workflowId, nodes) {
   for (const node of nodes) {
     const type = String(node?.data?.configType || node?.type || '').toLowerCase();
     const configuration = node?.data?.configuration || node?.data || {};
-    if (!['crontrigger', 'cron'].includes(type) || !node.id || !configuration.schedule) continue;
-    const timezone = configuration.timezone || 'UTC';
+    if (!['crontrigger', 'cron', 'scheduletrigger'].includes(type) || !node.id) continue;
+    const cronExpr = configuration.schedule || configuration.cronExpression;
+    if (!cronExpr) continue;
+    const timezone = configuration.timezone || 'Asia/Kolkata';
     try {
       new Intl.DateTimeFormat('en-US', { timeZone: timezone });
     } catch {
       throw new Error(`Invalid timezone "${timezone}" in schedule node "${node.id}"`);
     }
-    scheduled.push({ nodeId: node.id, cronExpression: configuration.schedule, timezone });
+    const enabled = configuration.enabled !== false;
+    scheduled.push({ nodeId: node.id, cronExpression: cronExpr, timezone, enabled });
   }
 
   // Insert or update configured schedules
   for (const schedule of scheduled) {
     await client.query(
-      `INSERT INTO workflow_schedules (workflow_id, node_id, cron_expression, timezone)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO workflow_schedules (workflow_id, node_id, cron_expression, timezone, enabled)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (workflow_id, node_id) DO UPDATE SET
          cron_expression = EXCLUDED.cron_expression,
          timezone = EXCLUDED.timezone,
-         enabled = true,
+         enabled = EXCLUDED.enabled,
          updated_at = now()`,
-      [workflowId, schedule.nodeId, schedule.cronExpression, schedule.timezone],
+      [workflowId, schedule.nodeId, schedule.cronExpression, schedule.timezone, schedule.enabled],
     );
   }
 
@@ -151,32 +160,35 @@ async function syncSchedules(client, workflowId, nodes) {
 async function upsertWorkflow(client, workflow) {
   const existing = await selectWorkflow(client, workflow.id, true);
   const definition = workflowDefinition(workflow);
+  const status = workflow.status ? String(workflow.status).toLowerCase() : undefined;
   let result;
   if (existing) {
     const updated = await client.query(
       `UPDATE workflows SET
          name = $2::varchar(255),
          description = coalesce($3, description),
-         definition = $4::jsonb,
-         version = CASE WHEN name IS DISTINCT FROM $2::varchar(255) OR definition IS DISTINCT FROM $4::jsonb
+         status = coalesce($4::varchar(20), status),
+         definition = $5::jsonb,
+         version = CASE WHEN name IS DISTINCT FROM $2::varchar(255) OR definition IS DISTINCT FROM $5::jsonb
                         THEN version + 1 ELSE version END,
-         updated_at = CASE WHEN name IS DISTINCT FROM $2::varchar(255) OR definition IS DISTINCT FROM $4::jsonb
+         updated_at = CASE WHEN name IS DISTINCT FROM $2::varchar(255) OR definition IS DISTINCT FROM $5::jsonb
                            THEN now() ELSE updated_at END
        WHERE id = $1 RETURNING *`,
-      [existing.id, workflow.name, workflow.description || null, definition],
+      [existing.id, workflow.name, workflow.description || null, status, definition],
     );
     result = updated.rows[0];
   } else {
     const generatedId = UUID_PATTERN.test(workflow.id) ? workflow.id : null;
     const inserted = await client.query(
-      `INSERT INTO workflows (id, legacy_id, name, description, definition)
-       VALUES (coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5::jsonb)
+      `INSERT INTO workflows (id, legacy_id, name, description, status, definition)
+       VALUES (coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, coalesce($5::varchar(20), 'active'), $6::jsonb)
        RETURNING *`,
       [
         generatedId,
         generatedId ? null : workflow.id,
         workflow.name,
         workflow.description || null,
+        status,
         definition,
       ],
     );
@@ -246,106 +258,167 @@ function mapExecutions(rows, nodeRows, logRows) {
 
 // Creates or updates a workflow in a database transaction
 export async function saveWorkflow(workflow) {
-  const client = await pool.connect();
+  let mapped;
   try {
-    await client.query('BEGIN');
-    const result = await upsertWorkflow(client, workflow);
-    await client.query('COMMIT');
-    return mapWorkflow(result);
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await upsertWorkflow(client, workflow);
+      await client.query('COMMIT');
+      mapped = mapWorkflow(result);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (dbErr) {
+    console.warn('[WorkflowRepo] DB saveWorkflow fallback to memoryStore:', dbErr.message);
+    mapped = memoryStore.saveWorkflow(workflow);
   }
+
+  if (mapped) {
+    memoryStore.saveWorkflow(mapped);
+    try {
+      syncWorkflowSchedules(mapped);
+    } catch (schedErr) {
+      console.warn('[WorkflowRepo] Schedule sync error on save:', schedErr.message);
+    }
+  }
+  return mapped;
 }
 
 // Retrieves a single workflow by legacy ID or UUID
 export async function getWorkflow(id) {
-  const row = await selectWorkflow(pool, id);
-  return mapWorkflow(row);
+  try {
+    const row = await selectWorkflow(pool, id);
+    if (row) {
+      const mapped = mapWorkflow(row);
+      memoryStore.saveWorkflow(mapped);
+      return mapped;
+    }
+  } catch (err) {
+    // Fallback to memoryStore
+  }
+  return memoryStore.getWorkflow(id);
 }
 
 // Returns a paginated list of workflows ordered by recent update
 export async function listWorkflows({ limit = 100, offset = 0 } = {}) {
-  const { rows } = await pool.query(
-    'SELECT * FROM workflows ORDER BY updated_at DESC LIMIT $1 OFFSET $2',
-    [limit, offset],
-  );
-  return rows.map(mapWorkflow);
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM workflows ORDER BY updated_at DESC LIMIT $1 OFFSET $2',
+      [limit, offset],
+    );
+    return rows.map(mapWorkflow);
+  } catch (err) {
+    return memoryStore.listWorkflows().slice(offset, offset + limit);
+  }
 }
 
 // Retrieves all workflows across all pages
 export async function listAllWorkflows() {
-  const workflows = [];
-  for (let offset = 0; ; offset += 100) {
-    const page = await listWorkflows({ limit: 100, offset });
-    workflows.push(...page);
-    if (page.length < 100) return workflows;
+  try {
+    const workflows = [];
+    for (let offset = 0; ; offset += 100) {
+      const page = await listWorkflows({ limit: 100, offset });
+      workflows.push(...page);
+      if (page.length < 100) return workflows;
+    }
+  } catch (err) {
+    return memoryStore.listWorkflows();
   }
 }
 
 // Deletes a workflow by legacy ID or UUID and cascades associated executions and schedules
 export async function deleteWorkflow(id) {
-  const row = await selectWorkflow(pool, id);
-  if (!row) return false;
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    await client.query('DELETE FROM workflow_executions WHERE workflow_id = $1', [row.id]);
-    await client.query('DELETE FROM workflow_schedules WHERE workflow_id = $1', [row.id]);
-    const { rowCount } = await client.query('DELETE FROM workflows WHERE id = $1', [row.id]);
-    await client.query('COMMIT');
-    return rowCount > 0;
+    removeWorkflowSchedules(id);
+    memoryStore.deleteWorkflow(id);
+  } catch (e) {
+    // ignore
+  }
+
+  try {
+    const row = await selectWorkflow(pool, id);
+    if (!row) return false;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM workflow_executions WHERE workflow_id = $1', [row.id]);
+      await client.query('DELETE FROM workflow_schedules WHERE workflow_id = $1', [row.id]);
+      const { rowCount } = await client.query('DELETE FROM workflows WHERE id = $1', [row.id]);
+      await client.query('COMMIT');
+      return rowCount > 0;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
+    return true;
   }
 }
 
 // Deletes all workflows and cascades associated executions and schedules
 export async function deleteAllWorkflows() {
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    await client.query('DELETE FROM workflow_executions');
-    await client.query('DELETE FROM workflow_schedules');
-    const { rowCount } = await client.query('DELETE FROM workflows');
-    await client.query('COMMIT');
-    return rowCount;
+    stopScheduler();
+  } catch (e) {
+    // ignore
+  }
+
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM workflow_executions');
+      await client.query('DELETE FROM workflow_schedules');
+      const { rowCount } = await client.query('DELETE FROM workflows');
+      await client.query('COMMIT');
+      return rowCount;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
+    return 0;
   }
 }
 
 // Creates a new execution record for a workflow
 export async function createExecution(record) {
-  const { rows } = await pool.query(
-    `WITH workflow AS (
-       SELECT id, version FROM workflows
-       WHERE legacy_id = $1 OR id::text = $1
-       ORDER BY (legacy_id = $1) DESC NULLS LAST LIMIT 1
-     )
-     INSERT INTO workflow_executions
-       (id, legacy_id, workflow_id, workflow_version, trigger_type, trigger_data)
-     SELECT coalesce($2::uuid, gen_random_uuid()), $3, workflow.id, workflow.version, $4, $5::jsonb
-     FROM workflow
-     RETURNING *`,
-    [
-      record.workflowId,
-      UUID_PATTERN.test(record.id) ? record.id : null,
-      UUID_PATTERN.test(record.id) ? null : record.id,
-      inferTriggerType(record.triggerPayload),
-      JSON.stringify(record.triggerPayload || {}),
-    ],
-  );
-  if (!rows[0]) throw new Error(`Workflow "${record.workflowId}" does not exist`);
-  return { ...mapExecution(rows[0]), workflowName: record.workflowName };
+  memoryStore.createExecution(record);
+  try {
+    const { rows } = await pool.query(
+      `WITH workflow AS (
+         SELECT id, version FROM workflows
+         WHERE legacy_id = $1 OR id::text = $1
+         ORDER BY (legacy_id = $1) DESC NULLS LAST LIMIT 1
+       )
+       INSERT INTO workflow_executions
+         (id, legacy_id, workflow_id, workflow_version, trigger_type, trigger_data)
+       SELECT coalesce($2::uuid, gen_random_uuid()), $3, workflow.id, workflow.version, $4, $5::jsonb
+       FROM workflow
+       RETURNING *`,
+      [
+        record.workflowId,
+        UUID_PATTERN.test(record.id) ? record.id : null,
+        UUID_PATTERN.test(record.id) ? null : record.id,
+        inferTriggerType(record.triggerPayload),
+        JSON.stringify(record.triggerPayload || {}),
+      ],
+    );
+    if (rows[0]) {
+      return { ...mapExecution(rows[0]), workflowName: record.workflowName };
+    }
+  } catch (err) {
+    // Fallback returned below
+  }
+  return record;
 }
 
 // Atomically persists a workflow and creates an execution for it
@@ -385,10 +458,16 @@ async function getExecutionRows(where, params) {
 
 // Fetches an execution by ID including its node execution steps and logs
 export async function getExecution(id) {
-  const rows = await getExecutionRows('e.legacy_id = $1 OR e.id::text = $1', [id]);
-  if (!rows[0]) return null;
-  const { nodeRows, logRows } = await executionRows([rows[0].id]);
-  return mapExecution(rows[0], nodeRows, logRows);
+  try {
+    const rows = await getExecutionRows('e.legacy_id = $1 OR e.id::text = $1', [id]);
+    if (rows && rows[0]) {
+      const { nodeRows, logRows } = await executionRows([rows[0].id]);
+      return mapExecution(rows[0], nodeRows, logRows);
+    }
+  } catch (err) {
+    // Fallback to memoryStore
+  }
+  return memoryStore.getExecution(id);
 }
 
 // Lists executions optionally filtered by workflowId with node steps and logs
@@ -414,96 +493,113 @@ export async function clearExecutions() {
 
 // Updates execution status, timestamps, trigger payload, or error message
 export async function updateExecution(id, partial) {
-  const fields = [];
-  const values = [id];
-  if (Object.hasOwn(partial, 'status')) {
-    const status = {
-      PENDING: 'queued',
-      RUNNING: 'running',
-      SUCCESS: 'completed',
-      FAILED: 'failed',
-      CANCELLED: 'cancelled',
-    }[partial.status] || partial.status;
-    values.push(status);
-    fields.push(`status = $${values.length}::varchar(20)`);
-    fields.push(`started_at = CASE WHEN $${values.length}::varchar(20) = 'running' THEN coalesce(started_at, now()) ELSE started_at END`);
-    fields.push(`finished_at = CASE WHEN $${values.length}::varchar(20) IN ('completed', 'failed', 'cancelled') THEN coalesce($${values.length + 1}::timestamptz, now()) ELSE finished_at END`);
-    values.push(partial.completedAt || null);
+  memoryStore.updateExecution(id, partial);
+  try {
+    const fields = [];
+    const values = [id];
+    if (Object.hasOwn(partial, 'status')) {
+      const status = {
+        PENDING: 'queued',
+        RUNNING: 'running',
+        SUCCESS: 'completed',
+        FAILED: 'failed',
+        CANCELLED: 'cancelled',
+      }[partial.status] || partial.status;
+      values.push(status);
+      fields.push(`status = $${values.length}::varchar(20)`);
+      fields.push(`started_at = CASE WHEN $${values.length}::varchar(20) = 'running' THEN coalesce(started_at, now()) ELSE started_at END`);
+      fields.push(`finished_at = CASE WHEN $${values.length}::varchar(20) IN ('completed', 'failed', 'cancelled') THEN coalesce($${values.length + 1}::timestamptz, now()) ELSE finished_at END`);
+      values.push(partial.completedAt || null);
+    }
+    if (Object.hasOwn(partial, 'triggerPayload')) {
+      values.push(JSON.stringify(partial.triggerPayload || {}));
+      fields.push(`trigger_data = $${values.length}::jsonb`);
+    }
+    if (Object.hasOwn(partial, 'error')) {
+      values.push(partial.error);
+      fields.push(`error = $${values.length}`);
+    }
+    if (fields.length === 0) return getExecution(id);
+    const { rows } = await pool.query(
+      `UPDATE workflow_executions SET ${fields.join(', ')}
+       WHERE legacy_id = $1 OR id::text = $1 RETURNING *`,
+      values,
+    );
+    return rows[0] ? getExecution(id) : memoryStore.getExecution(id);
+  } catch (err) {
+    return memoryStore.getExecution(id);
   }
-  if (Object.hasOwn(partial, 'triggerPayload')) {
-    values.push(JSON.stringify(partial.triggerPayload || {}));
-    fields.push(`trigger_data = $${values.length}::jsonb`);
-  }
-  if (Object.hasOwn(partial, 'error')) {
-    values.push(partial.error);
-    fields.push(`error = $${values.length}`);
-  }
-  if (fields.length === 0) return getExecution(id);
-  const { rows } = await pool.query(
-    `UPDATE workflow_executions SET ${fields.join(', ')}
-     WHERE legacy_id = $1 OR id::text = $1 RETURNING *`,
-    values,
-  );
-  return rows[0] ? getExecution(id) : null;
 }
 
 // Marks execution as running and initializes pending records for all workflow nodes
 export async function startExecution(executionId, nodes) {
-  const client = await pool.connect();
+  memoryStore.updateExecution(executionId, { status: 'RUNNING' });
   try {
-    await client.query('BEGIN');
-    const updated = await client.query(
-      `UPDATE workflow_executions SET status = 'running', started_at = coalesce(started_at, now())
-       WHERE legacy_id = $1 OR id::text = $1 RETURNING id`,
-      [executionId],
-    );
-    if (!updated.rows[0]) throw new Error(`Execution "${executionId}" does not exist`);
-    await client.query(
-      `INSERT INTO node_executions (execution_id, node_id, node_type, status)
-       SELECT $1, node.id, coalesce(node.type, 'unknown'), 'pending'
-       FROM jsonb_to_recordset($2::jsonb) AS node(id text, type text)
-       ON CONFLICT (execution_id, node_id, attempt) DO NOTHING`,
-      [updated.rows[0].id, JSON.stringify(nodes.map((node) => ({
-        id: node.id,
-        type: node.data?.configType || node.data?.type || node.type || 'unknown',
-      })))],
-    );
-    await client.query('COMMIT');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const updated = await client.query(
+        `UPDATE workflow_executions SET status = 'running', started_at = coalesce(started_at, now())
+         WHERE legacy_id = $1 OR id::text = $1 RETURNING id`,
+        [executionId],
+      );
+      if (updated.rows[0]) {
+        await client.query(
+          `INSERT INTO node_executions (execution_id, node_id, node_type, status)
+           SELECT $1, node.id, coalesce(node.type, 'unknown'), 'pending'
+           FROM jsonb_to_recordset($2::jsonb) AS node(id text, type text)
+           ON CONFLICT (execution_id, node_id, attempt) DO NOTHING`,
+          [updated.rows[0].id, JSON.stringify(nodes.map((node) => ({
+            id: node.id,
+            type: node.data?.configType || node.data?.type || node.type || 'unknown',
+          })))],
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
+    // DB not connected; memoryStore is already updated
   }
 }
 
 // Records start of an individual node execution with its input payload
 export async function startNodeExecution(executionId, { nodeId, nodeType, input }) {
-  const { rows } = await pool.query(
-    `INSERT INTO node_executions
-       (execution_id, node_id, node_type, status, input, started_at)
-     SELECT e.id, $2, $3, 'running', $4::jsonb, now()
-     FROM workflow_executions e WHERE e.legacy_id = $1 OR e.id::text = $1
-     ON CONFLICT (execution_id, node_id, attempt) DO UPDATE SET
-       status = 'running', input = EXCLUDED.input, started_at = now(),
-       finished_at = NULL, output = NULL, error = NULL
-     RETURNING id`,
-    [executionId, nodeId, nodeType || 'unknown', JSON.stringify(input ?? null)],
-  );
-  if (!rows[0]) throw new Error(`Execution "${executionId}" does not exist`);
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO node_executions
+         (execution_id, node_id, node_type, status, input, started_at)
+       SELECT e.id, $2, $3, 'running', $4::jsonb, now()
+       FROM workflow_executions e WHERE e.legacy_id = $1 OR e.id::text = $1
+       ON CONFLICT (execution_id, node_id, attempt) DO UPDATE SET
+         status = 'running', input = EXCLUDED.input, started_at = now(),
+         finished_at = NULL, output = NULL, error = NULL
+       RETURNING id`,
+      [executionId, nodeId, nodeType || 'unknown', JSON.stringify(input ?? null)],
+    );
+  } catch (err) {
+    // DB offline fallback
+  }
 }
 
 // Records completion or failure of a node execution with its output/error
 export async function finishNodeExecution(executionId, { nodeId, status, output, error }) {
-  const result = await pool.query(
-    `UPDATE node_executions n SET
-       status = $3, output = $4::jsonb, error = $5, finished_at = now()
-     FROM workflow_executions e
-     WHERE n.execution_id = e.id AND (e.legacy_id = $1 OR e.id::text = $1)
-       AND n.node_id = $2 AND n.attempt = 1`,
-    [executionId, nodeId, status, JSON.stringify(output ?? null), error || null],
-  );
-  if (!result.rowCount) throw new Error(`Node execution "${nodeId}" was not started`);
+  try {
+    const result = await pool.query(
+      `UPDATE node_executions n SET
+         status = $3, output = $4::jsonb, error = $5, finished_at = now()
+       FROM workflow_executions e
+       WHERE n.execution_id = e.id AND (e.legacy_id = $1 OR e.id::text = $1)
+         AND n.node_id = $2 AND n.attempt = 1`,
+      [executionId, nodeId, status, JSON.stringify(output ?? null), error || null],
+    );
+  } catch (err) {
+    // DB offline fallback
+  }
 }
 
 // Appends a sanitized log message associated with an execution (and optional node)
@@ -523,15 +619,18 @@ export async function appendLog(executionId, logEntry) {
     ? new Date(logEntry.timestamp).toISOString()
     : logEntry.timestamp || new Date().toISOString();
   const message = sanitized.message;
-  const { rowCount } = await pool.query(
-    `INSERT INTO execution_logs (execution_id, node_execution_id, level, message, metadata, created_at)
-     SELECT e.id, n.id, $3, $4, $5::jsonb, $6::timestamptz
-     FROM workflow_executions e
-     LEFT JOIN node_executions n ON n.execution_id = e.id AND n.node_id = $2 AND n.attempt = 1
-     WHERE e.legacy_id = $1 OR e.id::text = $1`,
-    [executionId, logEntry.nodeId || null, level, message, JSON.stringify(metadata), createdAt],
-  );
-  if (!rowCount) throw new Error(`Execution "${executionId}" does not exist`);
+  try {
+    await pool.query(
+      `INSERT INTO execution_logs (execution_id, node_execution_id, level, message, metadata, created_at)
+       SELECT e.id, n.id, $3, $4, $5::jsonb, $6::timestamptz
+       FROM workflow_executions e
+       LEFT JOIN node_executions n ON n.execution_id = e.id AND n.node_id = $2 AND n.attempt = 1
+       WHERE e.legacy_id = $1 OR e.id::text = $1`,
+      [executionId, logEntry.nodeId || null, level, message, JSON.stringify(metadata), createdAt],
+    );
+  } catch (err) {
+    // DB offline fallback
+  }
 }
 
 // Redacts sensitive keys and auth tokens from log entries before persistence

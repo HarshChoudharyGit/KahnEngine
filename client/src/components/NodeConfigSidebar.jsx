@@ -4,7 +4,7 @@ import { AlertCircle, AlertTriangle, Check, Sparkles, Trash2, X } from 'lucide-r
 import { getNodeConfigSchema } from '../nodes/nodeConfigRegistry.js'
 import NodeConfigForm from './NodeConfigForm.jsx'
 
-function NodeConfigPanel({ node, nodes, edges, onClose, onDelete, onSave, onInvalidSave }) {
+function NodeConfigPanel({ workflowId, node, nodes, edges, onClose, onDelete, onSave, onInvalidSave }) {
   const configType = node.data?.configType || node.data?.type || node.type || node.data?.title
   const schema = getNodeConfigSchema(configType)
   const ConfigForm = schema.Form ?? NodeConfigForm
@@ -172,6 +172,8 @@ function NodeConfigPanel({ node, nodes, edges, onClose, onDelete, onSave, onInva
             node={node}
             nodes={nodes}
             edges={edges}
+            workflowId={workflowId}
+            nodeId={node.id}
             value={draft}
             errors={errors}
             onChange={(nextValue) => {

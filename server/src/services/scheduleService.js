@@ -2,10 +2,14 @@ import cron from 'node-cron';
 import { nanoid } from 'nanoid';
 import { memoryStore } from '../store/memoryStore.js';
 import { executeWorkflow } from '../engine/executor.js';
+import {
+  createExecution,
+  getWorkflow,
+  listAllWorkflows,
+} from '../db/workflowRepository.js';
 
 /**
  * In-memory storage for active schedules and their running cron tasks.
- * Because no database is connected, schedules exist purely in server memory.
  * Active cron task instances are kept strictly in `activeTasks` and are NEVER serialized.
  */
 const schedules = new Map(); // scheduleId -> schedule metadata object
@@ -66,7 +70,7 @@ export function describeSchedule(cronExpression, timezone = 'Asia/Kolkata') {
       '0': 'Sun', '1': 'Mon', '2': 'Tue', '3': 'Wed', '4': 'Thu', '5': 'Fri', '6': 'Sat', '7': 'Sun',
       'MON': 'Mon', 'TUE': 'Tue', 'WED': 'Wed', 'THU': 'Thu', 'FRI': 'Fri', 'SAT': 'Sat', 'SUN': 'Sun'
     };
-    const dayNames = dow.split(',').map(d => daysMap[d.toUpperCase()] || d).join(', ');
+    const dayNames = dow.split(',').map((d) => daysMap[d.toUpperCase()] || d).join(', ');
     desc = `Weekly on [${dayNames}] at ${padHour}:${padMin}`;
   } else {
     desc = `Custom cron: ${cronExpression}`;
@@ -200,6 +204,7 @@ export function registerSchedule(params) {
 
           isRunning = true;
           try {
+            console.info(`[ScheduleService] Firing cron task for schedule ${scheduleId} (${cronExpression} ${timezone})`);
             await executeScheduledWorkflow(scheduleId, false);
           } catch (err) {
             console.error(`[ScheduleService] Execution failed for schedule ${scheduleId}:`, err);
@@ -219,6 +224,7 @@ export function registerSchedule(params) {
       );
 
       activeTasks.set(scheduleId, task);
+      console.info(`[ScheduleService] Registered active cron task "${scheduleId}": ${cronExpression.trim()} (${timezone})`);
     } catch (err) {
       scheduleRecord.status = 'ERROR';
       scheduleRecord.lastError = `Failed to initialize cron task: ${err.message}`;
@@ -240,9 +246,20 @@ export async function executeScheduledWorkflow(scheduleId, manualTrigger = false
     throw new Error(`Schedule with id "${scheduleId}" not found in memory.`);
   }
 
-  const fullWorkflow = memoryStore.getWorkflow(schedule.workflowId);
+  let fullWorkflow = memoryStore.getWorkflow(schedule.workflowId);
   if (!fullWorkflow) {
-    throw new Error(`Workflow "${schedule.workflowId}" not found in memoryStore. Ensure the workflow is saved.`);
+    try {
+      fullWorkflow = await getWorkflow(schedule.workflowId);
+      if (fullWorkflow) {
+        memoryStore.saveWorkflow(fullWorkflow);
+      }
+    } catch (e) {
+      // DB lookup failed, proceed to validation error
+    }
+  }
+
+  if (!fullWorkflow) {
+    throw new Error(`Workflow "${schedule.workflowId}" not found. Ensure the workflow is saved.`);
   }
 
   // 1. Isolate downstream reachable subgraph starting from the schedule trigger
@@ -271,16 +288,23 @@ export async function executeScheduledWorkflow(scheduleId, manualTrigger = false
     manualTrigger,
     source: 'schedule-trigger',
     subject: `[Schedule Trigger] ${fullWorkflow.name || 'Workflow'} Run`,
-    body: `Workflow "${fullWorkflow.name || fullWorkflow.id}" triggered on schedule "${schedule.cronExpression}" (${schedule.timezone}) at ${scheduledTime}. Dispatched by Dormammu Loop.`,
+    body: `Workflow "${fullWorkflow.name || fullWorkflow.id}" triggered on schedule "${schedule.cronExpression}" (${schedule.timezone}) at ${scheduledTime}. Dispatched by Kahn Engine Schedule Trigger.`,
   };
 
-  // 2. Create execution record in memoryStore (reuses existing execution history)
-  memoryStore.createExecution({
+  // 2. Create execution record in DB (and in memoryStore)
+  const executionRecord = {
     id: executionId,
     workflowId: fullWorkflow.id,
     workflowName: fullWorkflow.name,
     triggerPayload,
-  });
+  };
+
+  try {
+    await createExecution(executionRecord);
+  } catch (err) {
+    console.warn(`[ScheduleService] DB createExecution fallback to memory:`, err.message);
+  }
+  memoryStore.createExecution(executionRecord);
 
   // 3. Update schedule runtime stats
   schedule.lastRunAt = scheduledTime;
@@ -362,6 +386,121 @@ export function removeSchedule(scheduleId) {
 
   schedules.delete(scheduleId);
   return true;
+}
+
+/**
+ * Removes all schedules associated with a workflow.
+ */
+export function removeWorkflowSchedules(workflowId) {
+  if (!workflowId) return 0;
+  let count = 0;
+  for (const [schedId, sched] of schedules.entries()) {
+    if (sched.workflowId === workflowId) {
+      removeSchedule(schedId);
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Syncs schedules from a workflow object (e.g. after save or on startup).
+ * Finds all schedule/cron trigger nodes in the workflow and registers active cron tasks.
+ */
+export function syncWorkflowSchedules(workflow) {
+  if (!workflow || !workflow.id) return [];
+  const nodes = workflow.nodes || [];
+  const scheduleNodes = nodes.filter((node) => {
+    const type = String(node?.data?.configType || node?.type || '').toLowerCase();
+    return ['crontrigger', 'cron', 'scheduletrigger'].includes(type);
+  });
+
+  const isWorkflowActive = workflow.status === 'active' || workflow.status === 'ACTIVE' || !workflow.status;
+  const currentScheduleIds = new Set();
+  const registeredList = [];
+
+  for (const node of scheduleNodes) {
+    const config = node?.data?.configuration || node?.data || {};
+    const cronExpr = config.cronExpression || config.schedule;
+    if (!cronExpr) continue;
+
+    const validation = validateCronExpression(cronExpr);
+    if (!validation.valid) {
+      console.warn(`[ScheduleService] Invalid cron expression for node ${node.id} in workflow ${workflow.id}:`, validation.error);
+      continue;
+    }
+
+    const scheduleId = `sched_${workflow.id}_${node.id}`;
+    currentScheduleIds.add(scheduleId);
+
+    const isNodeEnabled = config.enabled !== false;
+    const shouldRun = isWorkflowActive && isNodeEnabled;
+    const timezone = config.timezone || 'Asia/Kolkata';
+
+    const registered = registerSchedule({
+      id: scheduleId,
+      workflowId: workflow.id,
+      triggerNodeId: node.id,
+      cronExpression: cronExpr,
+      timezone,
+      enabled: shouldRun,
+      summary: config.summary || describeSchedule(cronExpr, timezone),
+      scheduleType: config.scheduleType || 'custom',
+      workflow,
+    });
+    registeredList.push(registered);
+  }
+
+  // Clean up any stale schedules for nodes removed from this workflow
+  for (const [schedId, sched] of schedules.entries()) {
+    if (sched.workflowId === workflow.id && !currentScheduleIds.has(schedId)) {
+      removeSchedule(schedId);
+    }
+  }
+
+  return registeredList;
+}
+
+/**
+ * Initializes schedules for all active workflows in the database/store.
+ * Called on server startup.
+ */
+export async function initializeScheduler() {
+  try {
+    let workflows = [];
+    try {
+      workflows = await listAllWorkflows();
+    } catch (err) {
+      console.warn(`[ScheduleService] DB listAllWorkflows failed, checking memoryStore:`, err.message);
+      workflows = memoryStore.listWorkflows();
+    }
+
+    let activeCount = 0;
+    for (const wf of workflows) {
+      const synced = syncWorkflowSchedules(wf);
+      activeCount += synced.filter((s) => s.enabled).length;
+    }
+
+    console.info(`[ScheduleService] Scheduler initialized: ${activeCount} active schedule task(s) running across ${workflows.length} workflow(s).`);
+  } catch (err) {
+    console.error(`[ScheduleService] Failed to initialize scheduler:`, err);
+  }
+}
+
+/**
+ * Stops all active scheduler cron tasks. Called on server shutdown.
+ */
+export function stopScheduler() {
+  for (const [id, task] of activeTasks.entries()) {
+    try {
+      task.stop();
+    } catch (e) {
+      console.warn(`Error stopping task ${id}:`, e.message);
+    }
+  }
+  activeTasks.clear();
+  schedules.clear();
+  console.info('[ScheduleService] All active cron schedules stopped.');
 }
 
 /**

@@ -63,7 +63,13 @@ const FREQUENCY_MODES = [
   { id: 'cron', label: 'Custom Cron', icon: Terminal, desc: '5-field syntax' },
 ]
 
-export default function ScheduleConfigForm({ value = {}, errors = {}, onChange }) {
+export default function ScheduleConfigForm({
+  value = {},
+  errors = {},
+  onChange,
+  workflowId: propWorkflowId,
+  nodeId: propNodeId,
+}) {
   const [copied, setCopied] = useState(false)
   const [syncStatus, setSyncStatus] = useState(null)
   const [isSyncing, setIsSyncing] = useState(false)
@@ -72,9 +78,27 @@ export default function ScheduleConfigForm({ value = {}, errors = {}, onChange }
   const [customTzActive, setCustomTzActive] = useState(false)
   const [currentTimeStr, setCurrentTimeStr] = useState('')
 
+  const detectedBrowserTz = useMemo(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'
+    } catch {
+      return 'Asia/Kolkata'
+    }
+  }, [])
+
   const scheduleType = value.scheduleType || 'minutes'
-  const timezone = value.timezone || 'Asia/Kolkata'
+  const timezone = value.timezone || detectedBrowserTz || 'Asia/Kolkata'
   const enabled = value.enabled !== undefined ? Boolean(value.enabled) : true
+
+  // Auto-set detected timezone if not explicitly provided
+  useEffect(() => {
+    if (!value.timezone && detectedBrowserTz) {
+      onChange({
+        ...value,
+        timezone: detectedBrowserTz,
+      })
+    }
+  }, [detectedBrowserTz])
 
   // Current cron string
   const currentCron = scheduleType === 'cron'
@@ -210,27 +234,23 @@ export default function ScheduleConfigForm({ value = {}, errors = {}, onChange }
     setIsTesting(true)
     setBackendFeedback('')
     try {
-      const workflowId = value._workflowId || 'wf_canvas_active'
-      const triggerNodeId = value._nodeId || 'scheduleTrigger'
-      const scheduleId = syncStatus?.scheduleId || (value._workflowId ? `sched_${value._workflowId}_${triggerNodeId}` : null)
+      const targetWfId = propWorkflowId || value._workflowId || 'wf_canvas_active'
+      const targetTriggerNodeId = propNodeId || value._nodeId || 'scheduleTrigger'
+      const scheduleId = syncStatus?.scheduleId || `sched_${targetWfId}_${targetTriggerNodeId}`
 
-      if (!scheduleId) {
-        const regRes = await registerScheduleApi({
-          workflowId,
-          triggerNodeId,
-          cronExpression: currentCron,
-          timezone,
-          enabled: true,
-          summary: humanSummary,
-          scheduleType,
-        })
-        const newSchedId = regRes.schedule.id
-        const testRes = await runScheduleNowApi(newSchedId)
-        setBackendFeedback(`Workflow triggered successfully! Execution ID: ${testRes.executionResult?.executionId || 'queued'}`)
-      } else {
-        const testRes = await runScheduleNowApi(scheduleId)
-        setBackendFeedback(`Workflow triggered successfully! Execution ID: ${testRes.executionResult?.executionId || 'queued'}`)
-      }
+      const regRes = await registerScheduleApi({
+        id: scheduleId,
+        workflowId: targetWfId,
+        triggerNodeId: targetTriggerNodeId,
+        cronExpression: currentCron,
+        timezone,
+        enabled: true,
+        summary: humanSummary,
+        scheduleType,
+      })
+      const finalSchedId = regRes.schedule?.id || scheduleId
+      const testRes = await runScheduleNowApi(finalSchedId)
+      setBackendFeedback(`Workflow triggered successfully! Execution ID: ${testRes.executionResult?.executionId || 'queued'}`)
     } catch (err) {
       console.error('Test run error:', err)
       setBackendFeedback(`Test run error: ${err.message}`)
@@ -249,12 +269,14 @@ export default function ScheduleConfigForm({ value = {}, errors = {}, onChange }
         throw new Error(valRes.error || 'Server rejected cron expression.')
       }
 
-      const workflowId = value._workflowId || 'wf_canvas_active'
-      const triggerNodeId = value._nodeId || 'scheduleTrigger'
+      const targetWfId = propWorkflowId || value._workflowId || 'wf_canvas_active'
+      const targetTriggerNodeId = propNodeId || value._nodeId || 'scheduleTrigger'
+      const scheduleId = `sched_${targetWfId}_${targetTriggerNodeId}`
 
       const result = await registerScheduleApi({
-        workflowId,
-        triggerNodeId,
+        id: scheduleId,
+        workflowId: targetWfId,
+        triggerNodeId: targetTriggerNodeId,
         cronExpression: currentCron,
         timezone,
         enabled,
@@ -794,6 +816,25 @@ export default function ScheduleConfigForm({ value = {}, errors = {}, onChange }
             <Clock className="h-3 w-3 text-[#d4ad58]" />
             Current time in {timezone}: <strong className="text-[#f0d58e]">{currentTimeStr}</strong>
           </p>
+        )}
+
+        {detectedBrowserTz && timezone !== detectedBrowserTz && (
+          <div className="rounded-lg border border-amber-500/35 bg-amber-950/30 p-2.5 text-[11px] text-amber-200 space-y-1">
+            <div className="flex items-center gap-1.5 font-semibold text-amber-300">
+              <AlertCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+              <span>Timezone difference detected</span>
+            </div>
+            <p className="text-[11px] text-amber-200/90 leading-relaxed">
+              Your local device timezone is <strong>{detectedBrowserTz}</strong>, but schedule is set in <strong>{timezone}</strong>.
+            </p>
+            <button
+              type="button"
+              onClick={() => setField('timezone', detectedBrowserTz)}
+              className="inline-flex items-center gap-1 mt-0.5 text-[11px] text-[#f0d58e] underline hover:text-white cursor-pointer font-medium"
+            >
+              Switch schedule to your local timezone ({detectedBrowserTz})
+            </button>
+          </div>
         )}
       </div>
 

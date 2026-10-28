@@ -249,7 +249,7 @@ function WorkflowEditor({
   }
 
   const workflowIdRef = useRef(
-    loadedWorkflow?.id || (templateWorkflow ? `wf_${templateWorkflow.id}` : `wf_${Date.now()}`),
+    loadedWorkflow?.id || (templateWorkflow?.id ? `wf_${templateWorkflow.id}` : `wf_${Date.now()}`),
   )
   const nextNodeId = useRef(initialCanvasNodes.length + 10)
   const activeStreamCloseRef = useRef(null)
@@ -918,21 +918,22 @@ function WorkflowEditor({
   }
 
   const saveNodeConfiguration = (nodeId, configuration) => {
-    setNodes((currentNodes) => currentNodes.map((node) => (
-      node.id === nodeId
-        ? {
-          ...node,
-          data: {
-            ...node.data,
-            ...(!node.data.configType
-              ? { title: configuration.title, subtitle: configuration.subtitle }
-              : {}),
-            configuration,
-            configurationStatus: 'configured',
-          },
-        }
-        : node
-    )))
+    setNodes((currentNodes) => currentNodes.map((node) => {
+      if (node.id !== nodeId) return node
+      const updatedSubtitle = configuration?.summary || configuration?.subtitle || (!node.data.configType ? configuration.subtitle : node.data.subtitle)
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          ...(!node.data.configType
+            ? { title: configuration.title, subtitle: configuration.subtitle }
+            : {}),
+          subtitle: updatedSubtitle || node.data.subtitle,
+          configuration,
+          configurationStatus: 'configured',
+        },
+      }
+    }))
     setSelectedNodeId(null)
     setSaveStatus?.('unsaved')
   }
@@ -1157,6 +1158,7 @@ function WorkflowEditor({
           )}
 
           <NodeConfigSidebar
+            workflowId={workflowIdRef.current}
             node={selectedNode}
             nodes={nodes}
             edges={edges}

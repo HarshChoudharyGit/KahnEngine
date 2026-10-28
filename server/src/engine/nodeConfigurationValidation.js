@@ -171,9 +171,11 @@ export function validateNodeConfigurations(nodes = []) {
         break;
       }
       case 'cron':
-      case 'crontrigger': {
-        if (!validateCronExpression(config.schedule)) errors.push('Enter a valid five-field cron expression.');
-        const timezone = config.timezone || 'UTC';
+      case 'crontrigger':
+      case 'scheduletrigger': {
+        const schedule = config.schedule || config.cronExpression;
+        if (!validateCronExpression(schedule)) errors.push('Enter a valid five-field cron expression.');
+        const timezone = config.timezone || 'Asia/Kolkata';
         try {
           new Intl.DateTimeFormat('en-US', { timeZone: timezone });
         } catch {

@@ -38,8 +38,9 @@ function isValidGraphInput(nodes, edges) {
     }
     const nodeType = String(node.data?.configType || node.type || '').toLowerCase();
     const configuration = node.data?.configuration || node.data || {};
-    if (['crontrigger', 'cron'].includes(nodeType) && configuration.schedule) {
-      if (typeof configuration.schedule !== 'string' || configuration.schedule.length > 100) {
+    const cronSchedule = configuration.schedule || configuration.cronExpression;
+    if (['crontrigger', 'cron', 'scheduletrigger'].includes(nodeType) && cronSchedule) {
+      if (typeof cronSchedule !== 'string' || cronSchedule.length > 100) {
         return false;
       }
       try {
@@ -82,7 +83,7 @@ export async function workflowRoutes(fastify) {
   // Save / create workflow with Kahn's Algorithm validation
   fastify.post('/api/v1/workflows', async (request, reply) => {
     const body = request.body || {};
-    const { id, name = 'Untitled Workflow', description = null, nodes = [], edges = [] } = body;
+    const { id, name = 'Untitled Workflow', description = null, status = 'active', nodes = [], edges = [] } = body;
 
     if ((id !== undefined && (typeof id !== 'string' || !id.trim())) ||
         typeof name !== 'string' || !name.trim() || name.length > 255 ||
@@ -106,6 +107,7 @@ export async function workflowRoutes(fastify) {
       id: workflowId,
       name,
       description,
+      status,
       nodes,
       edges,
     });
@@ -172,6 +174,7 @@ export async function workflowRoutes(fastify) {
         id,
         name,
         description: workflow?.description,
+        status: workflow?.status || 'active',
         nodes: body.nodes,
         edges,
       };
