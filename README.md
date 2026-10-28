@@ -157,7 +157,7 @@ classDiagram
 - Interactive drag-and-drop node graph canvas built on `@xyflow/react`.
 - Supports 5 primary operational node types:
   - **Webhook Trigger**: External HTTP POST entrypoints.
-  - **Cron Trigger**: Stores cron syntax and timezone with the workflow; timed dispatch is not implemented.
+  - **Cron Trigger**: Dispatches the downstream workflow on its configured cron schedule and timezone.
   - **HTTP Request**: REST API connector with configurable methods, headers, and payloads.
   - **Transform**: In-memory JavaScript/JSON transformation routines.
   - **Delay**: Configurable pauses and rate dampeners.
@@ -202,7 +202,7 @@ classDiagram
 ### Backend & API
 - **Web Framework**: Fastify (Node.js) for high-throughput, low-overhead HTTP routing
 - **Graph & Math Utilities**: `graphlib` + Custom Kahn's Topological Sorter
-- **Schedules**: Cron trigger definitions and time zones persist in `workflow_schedules`; a background cron dispatcher is not implemented yet
+- **Schedules**: Cron trigger definitions and time zones persist in `workflow_schedules`; the server restores and runs enabled schedules with `node-cron`
 
 ### Distributed Queue & State
 - **Task Queue**: BullMQ/Redis integration is planned but not implemented
@@ -271,9 +271,9 @@ npm run dev --prefix server
 npm run dev --prefix client
 ```
 
-Workflows, execution records, node results, cron schedule definitions, integration status, and encrypted OAuth sessions persist in PostgreSQL. The SSE subscriber registry and GitHub polling cursor remain process-local runtime state. Cron definitions are stored, but this backend does not currently dispatch timed runs. Verify workflow persistence by creating a workflow with `POST /api/v1/workflows`, restarting the server, then retrieving it with `GET /api/v1/workflows/:id`. Live GitHub and Gmail requests still use their external APIs and require their OAuth credentials. BullMQ is not implemented.
+Workflows, execution records, node results, cron schedule definitions, integration status, and encrypted OAuth sessions persist in PostgreSQL. On startup, the server restores enabled cron triggers and runs each workflow in the API process. The scheduler is process-local, so run a single server instance to avoid duplicate cron executions; a distributed scheduler/worker is needed before scaling the API horizontally. The SSE subscriber registry and GitHub polling cursor also remain process-local runtime state. Verify workflow persistence by creating a workflow with `POST /api/v1/workflows`, restarting the server, then retrieving it with `GET /api/v1/workflows/:id`. Live GitHub and Gmail requests still use their external APIs and require their OAuth credentials. BullMQ is not implemented.
 
-Before the canvas dispatches a test run, every node must have a saved configuration and pass node-specific checks. The backend repeats configuration checks along with graph shape and cycle validation; invalid runs return HTTP 400 with per-node `nodeErrors`. This validates configured values, not external service availability or OAuth connectivity. A Cron node's configuration is stored and checked, but it does not schedule automatic runs.
+Before the canvas dispatches a test run, every node must have a saved configuration and pass node-specific checks. The backend repeats configuration checks along with graph shape and cycle validation; invalid runs return HTTP 400 with per-node `nodeErrors`. This validates configured values, not external service availability or OAuth connectivity. Scheduled executions record both the intended cron time and the actual dispatch time in their trigger payload so scheduling lag can be distinguished from downstream node or email-provider latency.
 
 ---
 

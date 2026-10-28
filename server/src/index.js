@@ -10,6 +10,10 @@ import { closeDB, connectDB } from './db/db.js';
 import { runMigrations } from './db/migrate.js';
 import { initializeGitHubSession } from './engine/agent/octokitClient.js';
 import { initializeGmailSession } from './engine/agent/gmailClient.js';
+import {
+  initializeWorkflowScheduler,
+  stopWorkflowScheduler,
+} from './services/workflowScheduler.js';
 
 const port = Number(process.env.PORT) || 4000;
 const host = process.env.HOST || '0.0.0.0';
@@ -38,6 +42,7 @@ await fastify.register(gmailRoutes);
 
 fastify.addHook('onClose', async () => {
   stopGitHubWatcher();
+  stopWorkflowScheduler();
   await closeDB();
 });
 
@@ -59,6 +64,7 @@ try {
   await runMigrations();
   await initializeGitHubSession();
   await initializeGmailSession();
+  await initializeWorkflowScheduler();
   await fastify.listen({ port, host });
   startGitHubWatcher(10000);
 } catch (err) {

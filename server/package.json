@@ -19,6 +19,7 @@
     "fastify": "^4.28.1",
     "googleapis": "^188.0.0",
     "nanoid": "^5.0.7",
+    "node-cron": "^4.2.1",
     "octokit": "^5.0.5",
     "pg": "^8.23.1"
   }

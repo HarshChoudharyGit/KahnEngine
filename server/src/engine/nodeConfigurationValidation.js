@@ -2,7 +2,7 @@ function isPresent(value) {
   return typeof value === 'string' ? Boolean(value.trim()) : value !== undefined && value !== null;
 }
 
-function validateCronExpression(expression) {
+export function validateCronExpression(expression) {
   if (typeof expression !== 'string') return false;
   const fields = expression.trim().split(/\s+/);
   const ranges = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];

@@ -12,7 +12,14 @@ import {
 } from '../db/workflowRepository.js';
 import { runKahnsAlgorithm } from '../engine/kahnsAlgorithm.js';
 import { executeWorkflow } from '../engine/executor.js';
-import { validateNodeConfigurations } from '../engine/nodeConfigurationValidation.js';
+import {
+  validateCronExpression,
+  validateNodeConfigurations,
+} from '../engine/nodeConfigurationValidation.js';
+import {
+  refreshWorkflowSchedules,
+  removeWorkflowSchedules,
+} from '../services/workflowScheduler.js';
 
 function pagination(query = {}) {
   const limit = Number(query.limit ?? 100);
@@ -41,6 +48,7 @@ function isValidGraphInput(nodes, edges) {
       if (typeof configuration.schedule !== 'string' || configuration.schedule.length > 100) {
         return false;
       }
+      if (!validateCronExpression(configuration.schedule)) return false;
       try {
         new Intl.DateTimeFormat('en-US', { timeZone: configuration.timezone || 'UTC' });
       } catch {
@@ -108,6 +116,7 @@ export async function workflowRoutes(fastify) {
       nodes,
       edges,
     });
+    refreshWorkflowSchedules(saved);
 
     return reply.code(201).send({
       success: true,
@@ -119,10 +128,12 @@ export async function workflowRoutes(fastify) {
   // Delete single workflow
   fastify.delete('/api/v1/workflows/:id', async (request, reply) => {
     try {
+      const workflow = await getWorkflow(request.params.id);
       const deleted = await deleteWorkflow(request.params.id);
       if (!deleted) {
         return reply.code(404).send({ success: false, error: 'Workflow not found' });
       }
+      removeWorkflowSchedules(workflow?.id || request.params.id);
       return { success: true, message: 'Workflow deleted successfully' };
     } catch (err) {
       request.log.error({ err, workflowId: request.params.id }, 'Failed to delete workflow');
@@ -200,6 +211,7 @@ export async function workflowRoutes(fastify) {
     if (workflowToPersist) {
       const result = await saveWorkflowAndCreateExecution(workflowToPersist, executionRecord);
       workflow = result.workflow;
+      refreshWorkflowSchedules(workflow);
     } else {
       await createExecution(executionRecord);
     }

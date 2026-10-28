@@ -121,20 +121,25 @@ async function syncSchedules(client, workflowId, nodes) {
     } catch {
       throw new Error(`Invalid timezone "${timezone}" in schedule node "${node.id}"`);
     }
-    scheduled.push({ nodeId: node.id, cronExpression: configuration.schedule, timezone });
+    scheduled.push({
+      nodeId: node.id,
+      cronExpression: configuration.schedule,
+      timezone,
+      enabled: configuration.enabled !== false,
+    });
   }
 
   // Insert or update configured schedules
   for (const schedule of scheduled) {
     await client.query(
-      `INSERT INTO workflow_schedules (workflow_id, node_id, cron_expression, timezone)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO workflow_schedules (workflow_id, node_id, cron_expression, timezone, enabled)
+       VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (workflow_id, node_id) DO UPDATE SET
          cron_expression = EXCLUDED.cron_expression,
          timezone = EXCLUDED.timezone,
-         enabled = true,
+         enabled = EXCLUDED.enabled,
          updated_at = now()`,
-      [workflowId, schedule.nodeId, schedule.cronExpression, schedule.timezone],
+      [workflowId, schedule.nodeId, schedule.cronExpression, schedule.timezone, schedule.enabled],
     );
   }
 
@@ -544,4 +549,3 @@ export async function upsertIntegrationConnection(provider, accountName, status,
     [provider, accountName || null, status, scopes],
   );
 }
-
