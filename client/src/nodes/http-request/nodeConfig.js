@@ -48,6 +48,9 @@ const httpRequestConfig = {
     apiKeyValue: '',
     basicUsername: '',
     basicPassword: '',
+    responsePath: '',
+    mockMode: false,
+    mockResponse: '',
   },
 
   // Fields to render in the form
@@ -67,6 +70,28 @@ const httpRequestConfig = {
     },
     { key: 'headers', label: 'Headers', type: 'keyValue' },
     { key: 'queryParams', label: 'Query parameters', type: 'keyValue' },
+    {
+      key: 'responsePath',
+      label: 'Jobs response path',
+      type: 'text',
+      placeholder: 'data.jobs',
+      description: 'Optional dotted path to the array this request returns.',
+    },
+    {
+      key: 'mockMode',
+      label: 'Use sample response (no HTTP request)',
+      type: 'checkbox',
+      description: 'Use the JSON below to test the workflow without a job API.',
+    },
+    {
+      key: 'mockResponse',
+      label: 'Sample response JSON',
+      type: 'textarea',
+      rows: 8,
+      placeholder: '{"data":{"jobs":[]}}',
+      when: ({ form }) => form.mockMode,
+      required: true,
+    },
     {
       key: 'authentication',
       label: 'Authentication',
@@ -142,6 +167,19 @@ const httpRequestConfig = {
     // Headers and query params: no half-filled rows
     Object.assign(errors, validateKeyValueRows(form.headers, 'headers'))
     Object.assign(errors, validateKeyValueRows(form.queryParams, 'queryParams'))
+    if (form.responsePath && !/^[\w.[\]-]+$/.test(form.responsePath.trim())) {
+      errors.responsePath = 'Use a dotted response path such as data.jobs.'
+    }
+    if (form.mockMode) {
+      try {
+        const mockResponse = JSON.parse(form.mockResponse || '')
+        if (!mockResponse || typeof mockResponse !== 'object') {
+          errors.mockResponse = 'Sample response must be a JSON object or array.'
+        }
+      } catch {
+        errors.mockResponse = 'Enter valid JSON for the sample response.'
+      }
+    }
 
     // Auth: only check fields for the selected mode
     if (form.authentication === 'bearer' && !String(form.bearerToken ?? '').trim()) {

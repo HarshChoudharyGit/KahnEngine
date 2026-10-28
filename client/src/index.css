@@ -105,6 +105,12 @@
    min-width: 210px;
  }
 
+ .workflow-node--loop {
+   min-width: 220px;
+   border-color: rgb(90 169 160 / 38%);
+   background: linear-gradient(145deg, #1a2020, #171512);
+ }
+
  .workflow-node.is-selected {
    border-color: #c76c4d;
    box-shadow: 0 0 0 1px rgb(199 108 77 / 24%), 0 10px 28px rgb(0 0 0 / 38%);
@@ -264,6 +270,18 @@
    background: #b8746d !important;
  }
 
+ .workflow-handle--loop-body {
+   background: #5aa9a0 !important;
+ }
+
+ .workflow-handle--loop-input {
+   background: #8b7651 !important;
+ }
+
+ .workflow-handle--loop-next {
+   background: #c69b45 !important;
+ }
+
  .workflow-node__branch-label {
    position: absolute;
    right: -43px;
@@ -285,6 +303,28 @@
  .workflow-node__branch-label--false {
    top: calc(68% - 6px);
    color: #e18a7a;
+ }
+
+ .workflow-node__branch-label--loop-body {
+   top: calc(38% - 6px);
+   color: #75c5bd;
+ }
+
+ .workflow-node__branch-label--loop-next {
+   top: calc(68% - 6px);
+   color: #e2bd67;
+ }
+
+ .workflow-node__input-label {
+   position: absolute;
+   top: calc(50% - 6px);
+   left: -27px;
+   z-index: 1;
+   color: #a9997b;
+   font-size: 8px;
+   font-weight: 700;
+   letter-spacing: 0.05em;
+   pointer-events: none;
  }
 
  .react-flow__edge-text {

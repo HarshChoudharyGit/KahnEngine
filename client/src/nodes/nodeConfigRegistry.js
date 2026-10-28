@@ -12,6 +12,8 @@ import httpRequestConfig from './http-request/nodeConfig.js'
 import HttpRequestConfigForm from './http-request/HttpRequestConfigForm.jsx'
 import scheduleTriggerConfig from './schedule/nodeConfig.js'
 import ScheduleConfigForm from './schedule/ScheduleConfigForm.jsx'
+import loopConfig from './loop/loopConfig.js'
+import LoopConfigForm from './loop/LoopConfigForm.jsx'
 
 const genericConfig = {
   label: 'Node',
@@ -29,6 +31,7 @@ const genericConfig = {
 const nodeConfigRegistry = {
   ...builtInNodeConfigs,
   condition: { ...conditionConfig, Form: ConditionConfigForm },
+  loop: { ...loopConfig, Form: LoopConfigForm },
   cronTrigger: { ...scheduleTriggerConfig, Form: ScheduleConfigForm },
   scheduleTrigger: { ...scheduleTriggerConfig, Form: ScheduleConfigForm },
   gmail: { ...gmailActionConfig, Form: GmailConfigForm },

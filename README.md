@@ -155,13 +155,18 @@ classDiagram
 
 ### 1. 🎨 Visual Flow Builder
 - Interactive drag-and-drop node graph canvas built on `@xyflow/react`.
-- Supports 5 primary operational node types:
+- Supports the following core workflow node types:
   - **Webhook Trigger**: External HTTP POST entrypoints.
   - **Cron Trigger**: Dispatches the downstream workflow on its configured cron schedule and timezone.
   - **HTTP Request**: REST API connector with configurable methods, headers, and payloads.
   - **Transform**: In-memory JavaScript/JSON transformation routines.
   - **Delay**: Configurable pauses and rate dampeners.
+  - **Loop**: Sequential For Each Item or Fixed Iterations control flow with aggregated per-iteration outputs.
 - **Client-Side Cycle Detection**: Prevents cyclical loop edge creation before persisting data to the database.
+
+The Loop node uses two explicit outgoing handles: **BODY** (`sourceHandle: "loop-body"`) and **NEXT** (`sourceHandle: "loop-next"`). Body nodes are all nodes reachable from BODY, excluding nodes reachable from NEXT; those excluded nodes run once after the loop. The graph remains acyclic. Use `{{loop.item}}`, `{{loop.index}}` (zero-based), `{{loop.iteration}}` (one-based), and `{{loop.total}}` inside the body. The default iteration cap is 100 (hard maximum 1000), and a failed iteration stops the workflow while preserving completed iteration outputs with `completed: false`. Successful aggregated outputs are stored on the Loop node as `items`, `results`, `total`, and `completed`.
+
+The template gallery includes **AI Internship & Job Alert Agent**. It imports with an inactive 09:00 Asia/Kolkata cron and sample job data enabled, so the complete flow can be exercised without a jobs API. Replace the sample endpoint/response, configure candidate preferences and the recipient, then connect Gemini and Gmail credentials before activating the schedule. Gmail runs once after the loop; disconnected Gmail execution is simulated rather than delivered.
 
 ### 2. 🧮 Deterministic Execution Engine
 - Dual-pass execution validation powered by **Kahn's Algorithm** (Topological Sort).

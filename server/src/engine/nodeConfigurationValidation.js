@@ -127,6 +127,19 @@ export function validateNodeConfigurations(nodes = []) {
         if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(method)) errors.push('Choose a supported HTTP method.');
         validateKeyValueRows(config.headers ?? [], 'Headers', errors);
         validateKeyValueRows(config.queryParams ?? [], 'Query parameters', errors);
+        if (config.responsePath && !/^[\w.[\]-]+$/.test(String(config.responsePath).trim())) {
+          errors.push('Use a dotted HTTP response path such as data.jobs.');
+        }
+        if (config.mockMode) {
+          try {
+            const mockResponse = JSON.parse(config.mockResponse || '');
+            if (!mockResponse || typeof mockResponse !== 'object') {
+              errors.push('HTTP sample response must be a JSON object or array.');
+            }
+          } catch {
+            errors.push('Enter valid JSON for the HTTP sample response.');
+          }
+        }
         const authentication = config.authentication || 'none';
         if (authentication === 'bearer' && !isPresent(config.bearerToken)) errors.push('Bearer token is required.');
         else if (authentication === 'apiKey') {
@@ -237,6 +250,30 @@ export function validateNodeConfigurations(nodes = []) {
             (!isExpression(config.rightValue) && !isNumeric(config.rightValue))
           ) {
             errors.push('Both values must be numbers for greater-than or less-than conditions.');
+          }
+        }
+        break;
+      }
+      case 'loop': {
+        const mode = config.mode || 'forEach';
+        const maxIterations = Number(config.maxIterations ?? 100);
+        const isExpression = (value) => typeof value === 'string' &&
+          /^\{\{[\w.[\]-]+\}\}$/.test(value.trim());
+        if (!['forEach', 'fixed'].includes(mode)) {
+          errors.push('Choose a supported loop mode.');
+        }
+        if (!Number.isInteger(maxIterations) || maxIterations < 1 || maxIterations > 1000) {
+          errors.push('Maximum iterations must be a whole number from 1 to 1000.');
+        }
+        if (mode === 'forEach' && !isExpression(config.arrayExpression)) {
+          errors.push('Enter an expression that resolves to an array, such as {{nodes.httpRequest1.output.data}}.');
+        }
+        if (mode === 'fixed') {
+          const iterations = Number(config.iterations);
+          if (!Number.isInteger(iterations) || iterations < 1 || iterations > 1000) {
+            errors.push('Iteration count must be a whole number from 1 to 1000.');
+          } else if (Number.isInteger(maxIterations) && iterations > maxIterations) {
+            errors.push('Iteration count cannot exceed the maximum iterations.');
           }
         }
         break;

@@ -65,6 +65,9 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
   const currentHeaders = Array.isArray(value.headers) ? value.headers : []
   const currentQueryParams = Array.isArray(value.queryParams) ? value.queryParams : []
   const currentBody = value.body ?? ''
+  const responsePath = value.responsePath ?? ''
+  const mockMode = Boolean(value.mockMode)
+  const mockResponse = value.mockResponse ?? ''
 
   const setField = (key, nextValue) => {
     onChange({ ...value, [key]: nextValue })
@@ -420,6 +423,42 @@ export default function HttpRequestConfigForm({ value = {}, errors = {}, onChang
             </button>
           ))}
         </div>
+        <label htmlFor="http-response-path" className="mt-4 block text-xs font-medium text-[#c9b991]">
+          Jobs response path
+          <input
+            id="http-response-path"
+            type="text"
+            value={responsePath}
+            onChange={(event) => setField('responsePath', event.target.value)}
+            placeholder="jobs or data.jobs"
+            aria-invalid={Boolean(errors.responsePath)}
+            className="mt-1.5 h-9 w-full rounded-md border border-[#8e7139]/35 bg-[#100d0a] px-3 text-xs font-mono text-[#f0e5c9] outline-none placeholder:text-[#756b5a] focus:border-[#c69b45]"
+          />
+          {errors.responsePath && <span role="alert" className="mt-1 block text-[11px] text-[#e18a7a]">{errors.responsePath}</span>}
+        </label>
+        <label className="mt-3 flex items-center gap-2 text-xs text-[#c9b991]">
+          <input
+            type="checkbox"
+            checked={mockMode}
+            onChange={(event) => setField('mockMode', event.target.checked)}
+            className="accent-[#c69b45]"
+          />
+          Use sample response (do not make an HTTP request)
+        </label>
+        {mockMode && (
+          <label htmlFor="http-mock-response" className="mt-3 block text-xs font-medium text-[#c9b991]">
+            Sample JSON response
+            <textarea
+              id="http-mock-response"
+              value={mockResponse}
+              onChange={(event) => setField('mockResponse', event.target.value)}
+              rows={6}
+              aria-invalid={Boolean(errors.mockResponse)}
+              className="mt-1.5 w-full rounded-md border border-[#8e7139]/35 bg-[#100d0a] px-3 py-2 text-xs font-mono text-[#f0e5c9] outline-none focus:border-[#c69b45]"
+            />
+            {errors.mockResponse && <span role="alert" className="mt-1 block text-[11px] text-[#e18a7a]">{errors.mockResponse}</span>}
+          </label>
+        )}
       </div>
 
       {/* 2. TABBED NAVIGATION BAR */}

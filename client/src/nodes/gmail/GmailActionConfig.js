@@ -7,6 +7,8 @@ const gmailActionConfig = {
     to: '',
     subject: '',
     body: '',
+    sendNoMatches: true,
+    noMatchesCount: '',
     messageId: '',
     searchQuery: '',
     labelName: 'STARRED',
@@ -53,6 +55,21 @@ const gmailActionConfig = {
       placeholder: 'Write your email...',
       when: ({ form }) =>
         ['send_email', 'reply_email'].includes(form.operation),
+      required: true,
+    },
+    {
+      key: 'sendNoMatches',
+      label: 'Send a summary when there are no matches',
+      type: 'checkbox',
+      when: ({ form }) => form.operation === 'send_email',
+      description: 'Turn off to skip the digest if no opportunities were shortlisted.',
+    },
+    {
+      key: 'noMatchesCount',
+      label: 'Shortlist count expression',
+      type: 'text',
+      placeholder: '{{nodes.jobAggregate.output.shortlistedCount}}',
+      when: ({ form }) => form.operation === 'send_email' && form.sendNoMatches === false,
       required: true,
     },
     {
@@ -113,6 +130,10 @@ const gmailActionConfig = {
       !form.body?.trim()
     ) {
       errors.body = 'Enter the email body.';
+    }
+    if (form.operation === 'send_email' && form.sendNoMatches === false &&
+        !/^\{\{[\w.[\]-]+\}\}$/.test(String(form.noMatchesCount || '').trim())) {
+      errors.noMatchesCount = 'Enter an expression resolving to the shortlisted job count.'
     }
 
     if (

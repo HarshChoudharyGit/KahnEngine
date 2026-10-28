@@ -6,6 +6,7 @@ import {
   Globe,
   Mail,
   MessageCircle,
+  Repeat,
   Timer,
   Webhook,
 } from 'lucide-react'
@@ -102,6 +103,16 @@ const nodeOptions = [
     accent: '#a78bfa',
     configType: 'condition',
     isCondition: true,
+  },
+  {
+    title: 'Loop',
+    subtitle: 'Repeat connected nodes for each item or iteration',
+    category: 'LOGIC',
+    group: 'Logic / Flow Control',
+    icon: Repeat,
+    accent: '#5aa9a0',
+    configType: 'loop',
+    isLoop: true,
   },
   {
     title: 'Webhook Trigger',

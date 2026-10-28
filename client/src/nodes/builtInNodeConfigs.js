@@ -57,6 +57,7 @@ const builtInNodeConfigs = {
     [
       { key: 'code', label: 'JavaScript code', type: 'textarea', rows: 10, placeholder: 'return { ...input, normalized: true }', required: true },
       { key: 'input', label: 'Input template', type: 'textarea', rows: 3, placeholder: '{{trigger.body}}' },
+      { key: 'failOnError', label: 'Fail workflow on script errors', type: 'checkbox' },
     ],
     ['code'],
   ),
