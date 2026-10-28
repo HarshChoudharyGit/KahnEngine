@@ -190,3 +190,20 @@ export async function listSchedulesApi(workflowId) {
   const res = await fetch(url);
   return res.json();
 }
+
+/**
+ * Sends a natural language prompt to the AI workflow generator.
+ * Returns a complete workflow with nodes and edges.
+ */
+export async function generateWorkflowFromPrompt(prompt) {
+  const res = await fetch(`${API_BASE_URL}/api/v1/ai/generate-workflow`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to generate workflow');
+  }
+  return data.workflow;
+}

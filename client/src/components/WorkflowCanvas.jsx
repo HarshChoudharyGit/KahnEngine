@@ -26,6 +26,7 @@ import {
   RotateCcw,
   Sparkles,
   Trash2,
+  Wand2,
   X,
   XCircle,
 } from 'lucide-react'
@@ -47,6 +48,8 @@ import { getConditionSummary } from '../nodes/condition/conditionUtils.js'
 import ExecutionHistory from './ExecutionHistory.jsx'
 import NodePicker from './NodePicker.jsx'
 import NodeConfigSidebar from './NodeConfigSidebar.jsx'
+import AIPromptBar from './AIPromptBar.jsx'
+import NodeDetailsModal from './NodeDetailsModal.jsx'
 
 const edgeStyle = { stroke: '#a68b5a', strokeWidth: 1.8 }
 const trueBranchEdgeStyle = { stroke: '#5aab82', strokeWidth: 2 }
@@ -200,6 +203,7 @@ function WorkflowEditor({
   selectedTemplate,
   loadedWorkflow,
   workflowTitle = 'My workflow',
+  onWorkflowTitleChange,
   setSaveStatus,
   setIsSaving,
   saveActionRef,
@@ -230,7 +234,19 @@ function WorkflowEditor({
   const [executions, setExecutions] = useState([])
   const [selectedExecutionId, setSelectedExecutionId] = useState(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [aiGeneratedNotice, setAiGeneratedNotice] = useState(null)
+  const [setupModalWorkflow, setSetupModalWorkflow] = useState(null)
+  const [toast, setToast] = useState(null)
   const [activeTelemetryStats, setActiveTelemetryStats] = useState(null)
+
+  const showToast = (message, type = 'info', duration = 4500) => {
+    setToast({ message, type })
+    if (duration) {
+      setTimeout(() => {
+        setToast((curr) => (curr?.message === message ? null : curr))
+      }, duration)
+    }
+  }
 
   const workflowIdRef = useRef(
     loadedWorkflow?.id || (templateWorkflow ? `wf_${templateWorkflow.id}` : `wf_${Date.now()}`),
@@ -385,6 +401,109 @@ function WorkflowEditor({
     event.dataTransfer.effectAllowed = 'copy'
   }
 
+  const handleAIWorkflowGenerated = (workflow) => {
+    if (!workflow || !workflow.nodes) return
+
+    // Hydrate the generated nodes with icon references from nodeOptions
+    const hydratedNodes = workflow.nodes.map((node) => {
+      const option = nodeOptions.find(
+        (opt) => opt.configType === node.data?.configType || opt.title === node.data?.title,
+      )
+      return {
+        ...node,
+        type: node.type || 'workflow',
+        data: {
+          ...option,
+          ...node.data,
+          configType: node.data?.configType || option?.configType,
+          icon: option?.icon || Sparkles,
+          accent: node.data?.accent || option?.accent || '#d4ad58',
+          status: 'idle',
+          configurationStatus: node.data?.configurationStatus || 'unconfigured',
+          isCondition: node.data?.isCondition || node.data?.configType === 'condition',
+        },
+      }
+    })
+
+    const styledEdges = workflow.edges.map((edge) => {
+      const sourceNode = hydratedNodes.find((n) => n.id === edge.source)
+      const isCondition = sourceNode?.data?.configType === 'condition' || sourceNode?.data?.isCondition
+      return {
+        ...edge,
+        type: edge.type || 'smoothstep',
+        animated: true,
+        style: isCondition && (edge.sourceHandle === 'true' || edge.sourceHandle === 'false')
+          ? getBranchEdgeStyle(sourceNode, edge.sourceHandle)
+          : edgeStyle,
+      }
+    })
+
+    setNodes(hydratedNodes)
+    setEdges(styledEdges)
+    setSelectedNodeId(null)
+    setExecutionStatus('idle')
+    setSaveStatus?.('unsaved')
+    setWorkflowNotice(null)
+
+    // Update the nextNodeId counter
+    const maxId = hydratedNodes.reduce((max, n) => {
+      const match = n.id.match(/node-(\d+)/)
+      return match ? Math.max(max, parseInt(match[1], 10)) : max
+    }, 0)
+    nextNodeId.current = maxId + 10
+
+    setAiGeneratedNotice({
+      name: workflow.name,
+      nodeCount: hydratedNodes.length,
+      edgeCount: styledEdges.length,
+    })
+    setTimeout(() => setAiGeneratedNotice(null), 5000)
+    setTimeout(() => fitView({ padding: 0.2, duration: 500 }), 200)
+
+    showToast(
+      `AI designed ${hydratedNodes.length} nodes! Review required details to execute.`,
+      'info',
+      4500,
+    )
+
+    // Automatically pop up the setup modal so the user can review and provide node details
+    setSetupModalWorkflow({
+      name: workflow.name,
+      nodes: hydratedNodes,
+      edges: styledEdges,
+    })
+  }
+
+  const handleApplyAndExecuteFromModal = async ({ workflowName, nodeConfigs, shouldExecute }) => {
+    if (workflowName && typeof onWorkflowTitleChange === 'function') {
+      onWorkflowTitleChange(workflowName)
+    }
+
+    const targetNodes = setupModalWorkflow?.nodes || nodes
+    const updatedNodes = targetNodes.map((node) => {
+      const cfg = nodeConfigs[node.id] || node.data?.configuration || {}
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          configuration: cfg,
+          configurationStatus: 'configured',
+        },
+      }
+    })
+
+    setNodes(updatedNodes)
+    setSaveStatus?.('unsaved')
+    setSetupModalWorkflow(null)
+
+    if (shouldExecute) {
+      showToast('Node details applied! Dispatching workflow execution...', 'info', 4000)
+      await handleRun(updatedNodes, workflowName)
+    } else {
+      showToast('Node configurations successfully saved to canvas!', 'success', 3500)
+    }
+  }
+
   const handlePaletteClick = (option) => {
     addNode(option, screenToFlowPosition({
       x: window.innerWidth * 0.58,
@@ -427,14 +546,16 @@ function WorkflowEditor({
   }
 
   // Real Run Dispatch with SSE Telemetry Streaming
-  const handleRun = async () => {
-    if (executionStatus === 'running' || nodes.length === 0) return
+  const handleRun = async (overrideNodes = null, overrideTitle = null) => {
+    const activeNodes = overrideNodes || nodes
+    const activeTitle = overrideTitle || workflowTitle || 'My workflow'
+    if (executionStatus === 'running' || activeNodes.length === 0) return
     setWorkflowNotice(null)
 
-    const validation = runKahnsAlgorithm(nodes, edges)
+    const validation = runKahnsAlgorithm(activeNodes, edges)
     if (!validation.isValid) {
       const cycleNodeTitles = validation.cycleNodes
-        .map((nodeId) => nodes.find((node) => node.id === nodeId)?.data?.title ?? nodeId)
+        .map((nodeId) => activeNodes.find((node) => node.id === nodeId)?.data?.title ?? nodeId)
       setWorkflowNotice({
         type: 'cycle',
         title: 'Workflow contains a cycle',
@@ -443,7 +564,7 @@ function WorkflowEditor({
       return
     }
 
-    const configurationErrors = validateNodeConfigurations(nodes)
+    const configurationErrors = validateNodeConfigurations(activeNodes)
     if (configurationErrors.length > 0) {
       setNodes((currentNodes) =>
         currentNodes.map((node) => ({
@@ -461,6 +582,7 @@ function WorkflowEditor({
         title: 'Fix these settings before running',
         issues: configurationErrors,
       })
+      showToast('Please complete node configurations before running.', 'error', 4000)
       return
     }
 
@@ -475,7 +597,7 @@ function WorkflowEditor({
     )
 
     try {
-      const sanitizedNodes = nodes.map((n) => ({
+      const sanitizedNodes = activeNodes.map((n) => ({
         id: n.id,
         type: n.type,
         position: n.position,
@@ -492,7 +614,7 @@ function WorkflowEditor({
 
       // Dispatch the validated workflow to the Fastify gateway.
       const dispatchResult = await executeWorkflow(workflowIdRef.current, {
-        name: workflowTitle,
+        name: activeTitle,
         nodes: sanitizedNodes,
         edges,
         triggerPayload: { source: 'webster-visual-canvas', timestamp: Date.now() },
@@ -1044,12 +1166,88 @@ function WorkflowEditor({
             onInvalidSave={markNodeConfigurationError}
           />
 
+          {/* Toast Notification */}
+          {toast && (
+            <div className="absolute top-16 left-1/2 z-40 -translate-x-1/2 animate-in fade-in slide-in-from-top-2">
+              <div
+                className={`flex items-center gap-2.5 rounded-xl border px-4 py-2.5 shadow-2xl backdrop-blur-xl text-xs font-medium ${
+                  toast.type === 'error'
+                    ? 'border-rose-500/30 bg-[#251518]/95 text-rose-200'
+                    : toast.type === 'success'
+                    ? 'border-emerald-500/30 bg-[#14221a]/95 text-emerald-200'
+                    : 'border-purple-500/30 bg-[#1b1428]/95 text-purple-200'
+                }`}
+              >
+                <Sparkles className="h-4 w-4 text-purple-400" />
+                <span>{toast.message}</span>
+                <button
+                  type="button"
+                  onClick={() => setToast(null)}
+                  className="ml-2 text-purple-400/50 hover:text-purple-200 cursor-pointer"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Node Details Setup Modal */}
+          <NodeDetailsModal
+            isOpen={Boolean(setupModalWorkflow)}
+            workflow={setupModalWorkflow}
+            onClose={() => setSetupModalWorkflow(null)}
+            onApplyAndExecute={handleApplyAndExecuteFromModal}
+            isExecuting={executionStatus === 'running'}
+          />
+
+          {/* AI Generated Success Notice */}
+          {aiGeneratedNotice && (
+            <div className="absolute left-1/2 bottom-24 z-30 -translate-x-1/2 animate-in fade-in slide-in-from-bottom-3">
+              <div className="flex items-center gap-2.5 rounded-xl border border-purple-500/30 bg-[#1a1225]/95 px-4 py-3 shadow-2xl shadow-purple-500/15 backdrop-blur-xl">
+                <Wand2 className="h-4 w-4 text-purple-400" />
+                <div>
+                  <p className="text-sm font-medium text-purple-200">
+                    Generated: {aiGeneratedNotice.name}
+                  </p>
+                  <p className="text-[11px] text-purple-300/60">
+                    {aiGeneratedNotice.nodeCount} nodes · {aiGeneratedNotice.edgeCount} connections
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAiGeneratedNotice(null)}
+                  className="ml-2 flex h-5 w-5 items-center justify-center rounded text-purple-400/50 hover:text-purple-300 cursor-pointer"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Bottom Execution Action Floating Dock */}
           <div className="absolute bottom-5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-[#8e7139]/30 bg-[#17120e]/95 p-2 shadow-2xl backdrop-blur-sm">
+            <AIPromptBar
+              onWorkflowGenerated={handleAIWorkflowGenerated}
+              disabled={executionStatus === 'running'}
+            />
+
+            <button
+              type="button"
+              onClick={() => setSetupModalWorkflow({ name: workflowTitle, nodes, edges })}
+              disabled={executionStatus === 'running' || nodes.length === 0}
+              className="flex items-center gap-1.5 rounded-md border border-purple-500/30 bg-[#1a1225]/90 px-3 py-2 text-xs font-medium text-purple-300 hover:border-purple-400 hover:text-white transition disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+              title="Review & complete node details"
+            >
+              <Wand2 className="h-3.5 w-3.5 text-purple-400" />
+              <span>Node Details</span>
+            </button>
+
+            <div className="mx-1 h-6 w-px bg-[#8e7139]/25" />
+
             <button
               id="test-workflow-btn"
               type="button"
-              onClick={handleRun}
+              onClick={() => handleRun()}
               disabled={executionStatus === 'running' || nodes.length === 0}
               className="flex cursor-pointer items-center gap-2 rounded-md bg-[#c69b45] px-4 py-2 text-sm font-semibold text-[#21170c] transition hover:bg-[#dfb95f] disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -1123,6 +1321,7 @@ function WorkflowCanvas({
   selectedTemplate,
   loadedWorkflow,
   workflowTitle,
+  onWorkflowTitleChange,
   setSaveStatus,
   setIsSaving,
   saveActionRef,
@@ -1135,6 +1334,7 @@ function WorkflowCanvas({
         selectedTemplate={selectedTemplate}
         loadedWorkflow={loadedWorkflow}
         workflowTitle={workflowTitle}
+        onWorkflowTitleChange={onWorkflowTitleChange}
         setSaveStatus={setSaveStatus}
         setIsSaving={setIsSaving}
         saveActionRef={saveActionRef}

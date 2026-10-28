@@ -173,6 +173,7 @@ function Workspace() {
             selectedTemplate={selectedTemplate}
             loadedWorkflow={loadedWorkflow}
             workflowTitle={workflowTitle}
+            onWorkflowTitleChange={setWorkflowTitle}
             setSaveStatus={setSaveStatus}
             setIsSaving={setIsSaving}
             saveActionRef={saveActionRef}

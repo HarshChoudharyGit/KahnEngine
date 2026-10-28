@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { workflowRoutes } from './routes/workflows.js';
@@ -5,6 +6,7 @@ import { webhookRoutes } from './routes/webhooks.js';
 import { telemetryRoutes } from './routes/telemetry.js';
 import { integrationRoutes } from './routes/integrations.js';
 import { gmailRoutes } from './routes/gmail.js';
+import { aiWorkflowRoutes } from './routes/aiWorkflow.js';
 import { startGitHubWatcher, stopGitHubWatcher } from './services/githubWatcher.js';
 import { closeDB, connectDB } from './db/db.js';
 import { runMigrations } from './db/migrate.js';
@@ -35,6 +37,7 @@ await fastify.register(webhookRoutes);
 await fastify.register(telemetryRoutes);
 await fastify.register(integrationRoutes);
 await fastify.register(gmailRoutes);
+await fastify.register(aiWorkflowRoutes);
 
 fastify.addHook('onClose', async () => {
   stopGitHubWatcher();

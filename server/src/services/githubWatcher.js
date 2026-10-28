@@ -91,17 +91,45 @@ async function getWorkflowsToWatch() {
 
 export async function triggerCommitWorkflow(workflow, commitData) {
   const executionId = `exec_${nanoid(8)}`;
+  const repoName = commitData.repository || 'HarshChoudharyGit/FirstRepo';
+  const branch = commitData.branch || 'main';
+  const headCommit = {
+    id: commitData.fullSha || commitData.sha,
+    message: commitData.message || 'New commit pushed to repository',
+    timestamp: commitData.date || new Date().toISOString(),
+    url: commitData.htmlUrl || `https://github.com/${repoName}/commit/${commitData.sha}`,
+    author: {
+      name: commitData.author || 'GitHub Developer',
+      email: commitData.authorEmail || 'dev@syntaxrush.io',
+    },
+  };
+
   const triggerPayload = {
     event: 'push',
-    repository: commitData.repository,
-    branch: commitData.branch || 'main',
+    repository: repoName,
+    branch,
     commit: commitData.sha,
     fullSha: commitData.fullSha || commitData.sha,
     author: commitData.author || 'GitHub Developer',
+    authorEmail: commitData.authorEmail || '',
     message: commitData.message || 'New commit pushed to repository',
     htmlUrl: commitData.htmlUrl || '',
     timestamp: commitData.date || new Date().toISOString(),
     source: 'github-poller',
+    head_commit: headCommit,
+    ref: `refs/heads/${branch}`,
+    payload: {
+      ref: `refs/heads/${branch}`,
+      repository: {
+        full_name: repoName,
+        name: repoName.split('/')[1] || repoName,
+      },
+      head_commit: headCommit,
+      commits: [headCommit],
+      sender: {
+        login: commitData.author || 'GitHub Developer',
+      },
+    },
   };
 
   const execution = {

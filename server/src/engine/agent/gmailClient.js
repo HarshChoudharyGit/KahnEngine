@@ -149,27 +149,64 @@ export function escapeHtml(str) {
 }
 
 export function formatPlainTextToHtml(text) {
+  if (!text) return '';
   if (/<[a-z][\s\S]*>/i.test(text)) {
     return text;
   }
-  const paragraphs = text.split(/\n{2,}/);
-  return paragraphs
-    .map((p) => {
-      let trimmed = p.trim();
-      if (!trimmed) return '';
-      if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-        const items = trimmed
-          .split('\n')
-          .filter((line) => line.trim().startsWith('- ') || line.trim().startsWith('* '))
-          .map((line) => `<li style="margin-bottom: 6px;">${escapeHtml(line.replace(/^[-*]\s+/, ''))}</li>`)
-          .join('');
-        return `<ul style="margin: 0 0 16px; padding-left: 20px;">${items}</ul>`;
+
+  const formatInline = (str) => {
+    let safe = escapeHtml(str);
+    safe = safe.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    safe = safe.replace(/`([^`]+)`/g, '<code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 12px; color: #0f172a;">$1</code>');
+    safe = safe.replace(/(https?:\/\/[^\s<"']+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" style="color: #2563eb; text-decoration: underline; word-break: break-all;">$1</a>');
+    safe = safe.replace(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})(?![^<]*>)/g, '<a href="mailto:$1" style="color: #2563eb; text-decoration: none;">$1</a>');
+    return safe;
+  };
+
+  const lines = text.split(/\r?\n/);
+  const output = [];
+  let currentList = [];
+
+  const flushList = () => {
+    if (currentList.length > 0) {
+      output.push(`<ul style="margin: 0 0 16px; padding-left: 20px; color: #334155;">${currentList.map((item) => `<li style="margin-bottom: 8px; line-height: 1.5;">${item}</li>`).join('')}</ul>`);
+      currentList = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+
+    if (!trimmed) {
+      flushList();
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(trimmed)) {
+      const itemContent = trimmed.replace(/^[-*]\s+/, '');
+      const kvMatch = itemContent.match(/^([^:]+):\s*(.*)$/);
+      if (kvMatch && !kvMatch[1].includes('http')) {
+        const key = kvMatch[1].trim();
+        const val = kvMatch[2].trim();
+        currentList.push(`<strong>${formatInline(key)}:</strong> ${formatInline(val)}`);
+      } else {
+        currentList.push(formatInline(itemContent));
       }
-      let safe = escapeHtml(trimmed).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      safe = safe.replace(/\n/g, '<br/>');
-      return `<p style="margin: 0 0 16px; line-height: 1.6;">${safe}</p>`;
-    })
-    .join('');
+    } else if (currentList.length > 0 && (/^\s{2,}/.test(rawLine) || !trimmed.endsWith(':'))) {
+      currentList[currentList.length - 1] += `<br/>${formatInline(trimmed)}`;
+    } else {
+      flushList();
+      if (trimmed.endsWith(':')) {
+        output.push(`<p style="margin: 16px 0 8px; font-weight: 600; color: #0f172a; font-size: 14px;">${formatInline(trimmed)}</p>`);
+      } else {
+        output.push(`<p style="margin: 0 0 12px; line-height: 1.6; color: #334155;">${formatInline(trimmed)}</p>`);
+      }
+    }
+  }
+
+  flushList();
+  return output.join('');
 }
 
 export function renderEmailHtml({ subject = '', body = '' } = {}) {
@@ -235,7 +272,7 @@ export function renderEmailHtml({ subject = '', body = '' } = {}) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(subject || 'Workflow Notification')}</title>
+  <title>${escapeHtml(String(subject || 'Workflow Notification').replace(/[\r\n]+/g, ' ').trim())}</title>
 </head>
 <body style="margin: 0; padding: 24px; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #0f172a; -webkit-font-smoothing: antialiased;">
   <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 620px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); overflow: hidden;">
@@ -248,7 +285,7 @@ export function renderEmailHtml({ subject = '', body = '' } = {}) {
     ${subject ? `
     <tr>
       <td style="padding: 16px 24px 8px; border-bottom: 1px solid #f1f5f9;">
-        <h2 style="margin: 0; font-size: 18px; font-weight: 600; color: #0f172a;">${escapeHtml(subject)}</h2>
+        <h2 style="margin: 0; font-size: 18px; font-weight: 600; color: #0f172a; line-height: 1.4;">${escapeHtml(String(subject).replace(/[\r\n]+/g, ' ').trim())}</h2>
       </td>
     </tr>
     ` : ''}
@@ -267,6 +304,19 @@ export function renderEmailHtml({ subject = '', body = '' } = {}) {
 </html>`.trim();
 }
 
+function formatRfc822Subject(subject) {
+  const clean = String(subject || '').replace(/[\r\n]+/g, ' ').trim();
+  if (/[^\x20-\x7E]/.test(clean)) {
+    return `=?utf-8?B?${Buffer.from(clean, 'utf8').toString('base64')}?=`;
+  }
+  return clean || 'Workflow Notification';
+}
+
+function sanitizeHeader(val) {
+  if (!val) return '';
+  return String(val).replace(/[\r\n]+/g, '').trim();
+}
+
 /** Send an email */
 export async function sendEmail({ to, subject, body, cc = '', bcc = '' }) {
   const auth = getAuthenticatedClient();
@@ -275,17 +325,22 @@ export async function sendEmail({ to, subject, body, cc = '', bcc = '' }) {
   const gmail = google.gmail({ version: 'v1', auth });
   const htmlContent = renderEmailHtml({ subject, body });
 
+  const cleanTo = sanitizeHeader(to);
+  const cleanCc = sanitizeHeader(cc);
+  const cleanBcc = sanitizeHeader(bcc);
+  const cleanSubject = formatRfc822Subject(subject);
+
   const headers = [
     `From: ${activeGmailUser?.email || 'me'}`,
-    `To: ${to}`,
-    cc ? `Cc: ${cc}` : null,
-    bcc ? `Bcc: ${bcc}` : null,
-    `Subject: ${subject}`,
+    `To: ${cleanTo}`,
+    cleanCc ? `Cc: ${cleanCc}` : null,
+    cleanBcc ? `Bcc: ${cleanBcc}` : null,
+    `Subject: ${cleanSubject}`,
     'MIME-Version: 1.0',
     'Content-Type: text/html; charset=utf-8',
   ].filter(Boolean);
 
-  const rawMessage = Buffer.from(`${headers.join('\r\n')}\r\n\r\n${htmlContent}`)
+  const rawMessage = Buffer.from(`${headers.join('\r\n')}\r\n\r\n${htmlContent}`, 'utf8')
     .toString('base64')
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
@@ -377,17 +432,21 @@ export async function replyToEmail({ messageId, body }) {
 
   const htmlContent = renderEmailHtml({ subject, body });
 
+  const cleanReplyTo = sanitizeHeader(replyTo);
+  const cleanSubject = formatRfc822Subject(subject);
+  const msgId = headers['message-id'] ? sanitizeHeader(headers['message-id']) : '';
+
   const headersList = [
     `From: ${activeGmailUser?.email || 'me'}`,
-    `To: ${replyTo}`,
-    `Subject: ${subject}`,
-    `In-Reply-To: ${headers['message-id'] || ''}`,
-    `References: ${headers['message-id'] || ''}`,
+    `To: ${cleanReplyTo}`,
+    `Subject: ${cleanSubject}`,
+    msgId ? `In-Reply-To: ${msgId}` : null,
+    msgId ? `References: ${msgId}` : null,
     'MIME-Version: 1.0',
     'Content-Type: text/html; charset=utf-8',
   ].filter(Boolean);
 
-  const rawMessage = Buffer.from(`${headersList.join('\r\n')}\r\n\r\n${htmlContent}`)
+  const rawMessage = Buffer.from(`${headersList.join('\r\n')}\r\n\r\n${htmlContent}`, 'utf8')
     .toString('base64')
     .replace(/\+/g, '-')
     .replace(/\//g, '_')

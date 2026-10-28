@@ -133,7 +133,20 @@ export async function getLatestCommit(repoInput, branch = null) {
     const params = { owner, repo, per_page: 1 };
     if (branch) params.sha = branch;
 
-    const { data } = await octokit.rest.repos.listCommits(params);
+    let data;
+    try {
+      const res = await octokit.rest.repos.listCommits(params);
+      data = res.data;
+    } catch (err) {
+      if ((err.status === 404 || String(err.message || '').includes('Not Found')) && branch) {
+        // Fallback to default branch (e.g. master if main not found)
+        const fallbackRes = await octokit.rest.repos.listCommits({ owner, repo, per_page: 1 });
+        data = fallbackRes.data;
+      } else {
+        throw err;
+      }
+    }
+
     if (!data || data.length === 0) {
       return { success: false, repository: repoInput, error: 'No commits found' };
     }
@@ -147,6 +160,7 @@ export async function getLatestCommit(repoInput, branch = null) {
       fullSha: commit.sha,
       message: commit.commit.message,
       author: commit.commit.author?.name || commit.author?.login || 'unknown',
+      authorEmail: commit.commit.author?.email || '',
       date: commit.commit.author?.date,
       htmlUrl: commit.html_url,
     };
