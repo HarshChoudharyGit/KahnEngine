@@ -60,23 +60,6 @@ const builtInNodeConfigs = {
     ],
     ['code'],
   ),
-  condition: simpleRequiredConfig(
-    'Condition',
-    'Choose how this workflow branches based on incoming data.',
-    [
-      { key: 'leftValue', label: 'Value to evaluate', type: 'text', placeholder: '{{trigger.body.priority}}', required: true },
-      { key: 'operator', label: 'Operator', type: 'select', options: ['equals', 'notEquals', 'contains', 'greaterThan', 'lessThan', 'isEmpty'].map((value) => ({ value, label: value })) },
-      {
-        key: 'rightValue',
-        label: 'Compare against',
-        type: 'text',
-        placeholder: 'enterprise',
-        required: true,
-        when: ({ form }) => ['greaterThan', 'lessThan'].includes(form.operator),
-      },
-    ],
-    ['leftValue'],
-  ),
   wait: simpleRequiredConfig(
     'Delay',
     'Pause workflow execution before continuing.',

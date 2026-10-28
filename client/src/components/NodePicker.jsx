@@ -4,20 +4,23 @@ import { nodeOptions } from '../data/editorData.js'
 
 const categories = [
   { id: 'apps', label: 'Apps', matches: (option) => option.category === 'ACTION' },
-  { id: 'core', label: 'Core nodes', matches: (option) => option.category !== 'ACTION' },
-]
+  { id: 'logic', label: 'Logic / Flow Control', matches: (option) => option.category === 'LOGIC' },
+  { id: 'core', label: 'Core nodes', matches: (option) => option.category !== 'ACTION' && option.category !== 'LOGIC' },
+];
 
-function NodePicker({ onSelect, onClose, onDragStart }) {
-  const [query, setQuery] = useState('')
-  const searchRef = useRef(null)
+
+
+function NodePicker({ onSelect, onClose, onDragStart }){
+  const [query, setQuery] = useState('');
+  const searchRef = useRef(null);
 
   const filteredOptions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
     if (!normalizedQuery) return nodeOptions
 
     return nodeOptions.filter((option) =>
-      [option.title, option.subtitle, option.category]
-        .some((value) => value.toLowerCase().includes(normalizedQuery)),
+      [option.title, option.subtitle, option.category, option.group]
+        .some((value) => typeof value === 'string' && value.toLowerCase().includes(normalizedQuery)),
     )
   }, [query])
 

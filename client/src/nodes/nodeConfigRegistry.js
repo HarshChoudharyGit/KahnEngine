@@ -1,6 +1,8 @@
 import aiAgentConfig from './ai-agent/nodeConfig.js'
 import AIAgentConfigForm from './ai-agent/AIAgentConfigForm.jsx'
 import { builtInNodeConfigs } from './builtInNodeConfigs.js'
+import conditionConfig from './condition/conditionConfig.js'
+import ConditionConfigForm from './condition/ConditionConfigForm.jsx'
 import githubTriggerConfig from './github/nodeConfig.js'
 import GitHubTriggerConfigForm from './github/GitHubTriggerConfigForm.jsx'
 import gmailActionConfig from './gmail/GmailActionConfig.js'
@@ -26,6 +28,7 @@ const genericConfig = {
 
 const nodeConfigRegistry = {
   ...builtInNodeConfigs,
+  condition: { ...conditionConfig, Form: ConditionConfigForm },
   cronTrigger: { ...scheduleTriggerConfig, Form: ScheduleConfigForm },
   scheduleTrigger: { ...scheduleTriggerConfig, Form: ScheduleConfigForm },
   gmail: { ...gmailActionConfig, Form: GmailConfigForm },

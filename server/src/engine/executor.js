@@ -852,9 +852,9 @@ async function executeSingleNode(node, context, log) {
     }
 
     case 'condition': {
-      const left = config.leftValue || '';
+      const left = config.leftValue ?? '';
       const op = config.operator || 'equals';
-      const right = config.rightValue || '';
+      const right = config.rightValue ?? '';
       let outcome = true;
       if (op === 'equals') outcome = String(left) === String(right);
       else if (op === 'notEquals') outcome = String(left) !== String(right);

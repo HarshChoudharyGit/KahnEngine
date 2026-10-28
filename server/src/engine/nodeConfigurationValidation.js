@@ -102,7 +102,7 @@ export function validateNodeConfigurations(nodes = []) {
           required('messageId', 'Message ID');
           if (operation === 'reply_email') required('body', 'Email body');
           if (operation === 'add_label' && config.labelName &&
-              !['STARRED', 'IMPORTANT', 'UNREAD'].includes(config.labelName)) {
+            !['STARRED', 'IMPORTANT', 'UNREAD'].includes(config.labelName)) {
             errors.push('Choose a supported Gmail label.');
           }
         } else {
@@ -114,7 +114,7 @@ export function validateNodeConfigurations(nodes = []) {
         const event = config.event || 'new_email';
         if (!['new_email', 'new_matching_email'].includes(event)) errors.push('Select a supported Gmail trigger event.');
         if (event === 'new_matching_email' && config.sender &&
-            !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(config.sender)) {
+          !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(config.sender)) {
           errors.push('Enter a valid sender email.');
         }
         break;
@@ -201,11 +201,11 @@ export function validateNodeConfigurations(nodes = []) {
           errors.push('Choose a supported AI model.');
         }
         if (config.temperature !== undefined &&
-            (!Number.isFinite(Number(config.temperature)) || Number(config.temperature) < 0 || Number(config.temperature) > 2)) {
+          (!Number.isFinite(Number(config.temperature)) || Number(config.temperature) < 0 || Number(config.temperature) > 2)) {
           errors.push('Temperature must be between 0 and 2.');
         }
         if (config.maxOutputTokens !== undefined &&
-            (!Number.isInteger(Number(config.maxOutputTokens)) || Number(config.maxOutputTokens) < 1 || Number(config.maxOutputTokens) > 128000)) {
+          (!Number.isInteger(Number(config.maxOutputTokens)) || Number(config.maxOutputTokens) < 1 || Number(config.maxOutputTokens) > 128000)) {
           errors.push('Maximum output tokens must be a whole number from 1 to 128,000.');
         }
         if (config.structuredOutput) {
@@ -219,13 +219,25 @@ export function validateNodeConfigurations(nodes = []) {
       }
       case 'condition': {
         required('leftValue', 'Value to evaluate');
-        if (['greaterThan', 'lessThan'].includes(config.operator)) {
+        const supportedOperators = ['equals', 'notEquals', 'contains', 'greaterThan', 'lessThan', 'isEmpty'];
+        const operator = config.operator || 'equals';
+        if (!supportedOperators.includes(operator)) {
+          errors.push('Choose a supported condition operator.');
+        }
+        if (operator !== 'isEmpty') {
           required('rightValue', 'Comparison value');
-          if (!Number.isFinite(Number(config.leftValue)) || !Number.isFinite(Number(config.rightValue))) {
+        }
+        if (['greaterThan', 'lessThan'].includes(operator)) {
+          const isExpression = (value) => typeof value === 'string' &&
+            /^\s*\{\{[\w.[\]-]+\}\}\s*$/.test(value);
+          const isNumeric = (value) => typeof value === 'number' ||
+            (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value)));
+          if (
+            (!isExpression(config.leftValue) && !isNumeric(config.leftValue)) ||
+            (!isExpression(config.rightValue) && !isNumeric(config.rightValue))
+          ) {
             errors.push('Both values must be numbers for greater-than or less-than conditions.');
           }
-        } else if (config.operator && !['equals', 'notEquals', 'contains', 'isEmpty'].includes(config.operator)) {
-          errors.push('Choose a supported condition operator.');
         }
         break;
       }

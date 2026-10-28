@@ -12,6 +12,7 @@ import {
   ReactFlowProvider,
   useEdgesState,
   useNodesState,
+  useNodes,
   useReactFlow,
 } from '@xyflow/react'
 import {
@@ -19,7 +20,6 @@ import {
   AlertCircle,
   Check,
   CheckCircle2,
-  ExternalLink,
   LoaderCircle,
   Plus,
   Radio,
@@ -41,22 +41,31 @@ import {
 } from '../services/api.js'
 import { runKahnsAlgorithm } from '../utils/kahnsAlgorithm.js'
 import { validateNodeConfigurations } from '../utils/nodeConfigurationValidation.js'
+import { getConditionSummary } from '../nodes/condition/conditionUtils.js'
 import ExecutionHistory from './ExecutionHistory.jsx'
 import NodePicker from './NodePicker.jsx'
 import NodeConfigSidebar from './NodeConfigSidebar.jsx'
 
 const edgeStyle = { stroke: '#a68b5a', strokeWidth: 1.8 }
+const trueBranchEdgeStyle = { stroke: '#5aab82', strokeWidth: 2 }
+const falseBranchEdgeStyle = { stroke: '#b8746d', strokeWidth: 2 }
 const NODE_DRAG_DATA_TYPE = 'application/dormammu-node'
 
 function WorkflowNode({ id, data, selected }) {
+  const workflowNodes = useNodes()
   const NodeIcon = data.icon ?? Sparkles
   const status = data.status ?? 'idle'
+  const isCondition = data.isCondition || data.configType === 'condition'
   const statusText = {
     idle: 'Idle',
     running: 'Working…',
     success: 'Complete',
     error: 'Failed',
+    skipped: 'Skipped',
   }[status] || 'Idle'
+  const conditionResult = isCondition && typeof data.conditionResult === 'boolean'
+    ? data.conditionResult
+    : undefined
   const configurationStatus = data.configurationStatus ?? 'unconfigured'
   const configurationLabel = {
     configured: 'Configured',
@@ -65,10 +74,10 @@ function WorkflowNode({ id, data, selected }) {
   }[configurationStatus]
 
   return (
-    <div className={`workflow-node${selected ? ' is-selected' : ''}${status === 'running' ? ' is-running shadow-[0_0_15px_rgba(212,173,88,0.35)] ring-1 ring-[#d4ad58]' : status === 'success' ? ' ring-1 ring-emerald-500/40' : status === 'error' ? ' ring-1 ring-rose-500/40' : ''}`}>
+    <div className={`workflow-node${isCondition ? ' workflow-node--condition' : ''}${selected ? ' is-selected' : ''}${status === 'running' ? ' is-running shadow-[0_0_15px_rgba(212,173,88,0.35)] ring-1 ring-[#d4ad58]' : status === 'success' ? ' ring-1 ring-emerald-500/40' : status === 'error' ? ' ring-1 ring-rose-500/40' : ''}`}>
       <NodeResizer
         isVisible={selected}
-        minWidth={180}
+        minWidth={isCondition ? 210 : 180}
         minHeight={84}
         maxWidth={520}
         maxHeight={320}
@@ -87,15 +96,27 @@ function WorkflowNode({ id, data, selected }) {
         </span>
         <div className="workflow-node__copy">
           <span className="workflow-node__title">{data.title}</span>
-          <span className="workflow-node__subtitle">{data.subtitle}</span>
+          <span className="workflow-node__subtitle">
+            {isCondition
+              ? data.configuration?.leftValue
+                ? getConditionSummary(data.configuration, workflowNodes)
+                : 'Set up a condition'
+              : data.subtitle}
+          </span>
         </div>
-        <span className={`workflow-node__status workflow-node__status--${status}`} aria-label={`Node status: ${statusText}`}>
-          {status === 'success' ? (
+        <span className={`workflow-node__status workflow-node__status--${status}`} aria-label={`Node status: ${conditionResult === undefined ? statusText : conditionResult ? 'TRUE' : 'FALSE'}`}>
+          {conditionResult !== undefined ? (
+            <span className={conditionResult ? 'workflow-node__result--true' : 'workflow-node__result--false'}>
+              {conditionResult ? 'TRUE' : 'FALSE'}
+            </span>
+          ) : status === 'success' ? (
             <Check aria-hidden="true" className="h-3 w-3 text-emerald-400" />
           ) : status === 'running' ? (
             <LoaderCircle aria-hidden="true" className="h-3 w-3 animate-spin text-[#d4ad58]" />
           ) : status === 'error' ? (
             <AlertCircle aria-hidden="true" className="h-3 w-3 text-rose-400" />
+          ) : status === 'skipped' ? (
+            <span className="workflow-node__result--skipped">SKIPPED</span>
           ) : configurationStatus === 'error' ? (
             <AlertCircle aria-hidden="true" className="h-3 w-3 text-amber-400" />
           ) : null}
@@ -107,10 +128,12 @@ function WorkflowNode({ id, data, selected }) {
           {configurationLabel}
         </span>
       </div>
-      {data.isCondition ? (
+      {isCondition ? (
         <>
-          <Handle id="true" type="source" position={Position.Right} style={{ top: '38%' }} className="workflow-handle" />
-          <Handle id="false" type="source" position={Position.Right} style={{ top: '68%' }} className="workflow-handle workflow-handle--muted" />
+          <Handle id="true" type="source" position={Position.Right} style={{ top: '38%' }} className="workflow-handle workflow-handle--true" />
+          <span className="workflow-node__branch-label workflow-node__branch-label--true">TRUE</span>
+          <Handle id="false" type="source" position={Position.Right} style={{ top: '68%' }} className="workflow-handle workflow-handle--false" />
+          <span className="workflow-node__branch-label workflow-node__branch-label--false">FALSE</span>
         </>
       ) : (
         <Handle type="source" position={Position.Right} className="workflow-handle" />
@@ -142,14 +165,30 @@ function hydrateWorkflowNodes(nodes) {
   })
 }
 
-function hydrateWorkflowEdges(edges) {
+function getBranchEdgeStyle(sourceNode, sourceHandle) {
+  if ((sourceNode?.data?.configType === 'condition' || sourceNode?.data?.isCondition) && sourceHandle === 'true') {
+    return trueBranchEdgeStyle
+  }
+  if ((sourceNode?.data?.configType === 'condition' || sourceNode?.data?.isCondition) && sourceHandle === 'false') {
+    return falseBranchEdgeStyle
+  }
+  return edgeStyle
+}
+
+function hydrateWorkflowEdges(edges, nodes) {
   if (!Array.isArray(edges)) return initialEdges
-  return edges.map((edge) => ({
-    ...edge,
-    type: edge.type || 'smoothstep',
-    animated: edge.animated !== undefined ? edge.animated : true,
-    style: edge.style || edgeStyle,
-  }))
+  return edges.map((edge) => {
+    const sourceNode = nodes.find((node) => node.id === edge.source)
+    const isCondition = sourceNode?.data?.configType === 'condition' || sourceNode?.data?.isCondition
+    return {
+      ...edge,
+      type: edge.type || 'smoothstep',
+      animated: edge.animated !== undefined ? edge.animated : true,
+      style: isCondition && (edge.sourceHandle === 'true' || edge.sourceHandle === 'false')
+        ? getBranchEdgeStyle(sourceNode, edge.sourceHandle)
+        : edge.style || edgeStyle,
+    }
+  })
 }
 
 const nodeTypes = { workflow: WorkflowNode }
@@ -176,7 +215,7 @@ function WorkflowEditor({
   const initialCanvasEdges = templateWorkflow
     ? templateWorkflow.edges
     : loadedWorkflow
-      ? hydrateWorkflowEdges(loadedWorkflow.edges)
+      ? hydrateWorkflowEdges(loadedWorkflow.edges, initialCanvasNodes)
       : initialEdges
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialCanvasNodes)
@@ -307,7 +346,11 @@ function WorkflowEditor({
   }
 
   const addNode = (option, position) => {
-    const id = `node-${nextNodeId.current++}`
+    let id = `node-${nextNodeId.current++}`
+    while (nodes.some((node) => node.id === id)) {
+      id = `node-${nextNodeId.current++}`
+    }
+
     setNodes((currentNodes) => [
       ...currentNodes,
       {
@@ -352,7 +395,10 @@ function WorkflowEditor({
       id: `e-${connection.source}-${connection.target}`,
       type: 'smoothstep',
       animated: true,
-      style: edgeStyle,
+      style: getBranchEdgeStyle(
+        nodes.find((node) => node.id === connection.source),
+        connection.sourceHandle,
+      ),
     }
     const candidateEdges = [...edges, candidateEdge]
 
@@ -418,7 +464,7 @@ function WorkflowEditor({
     setNodes((currentNodes) =>
       currentNodes.map((node) => ({
         ...node,
-        data: { ...node.data, status: 'idle' },
+        data: { ...node.data, status: 'idle', conditionResult: undefined },
       })),
     )
 
@@ -477,7 +523,7 @@ function WorkflowEditor({
             topologicalOrder,
           }))
         },
-        onNodeStatus: ({ nodeId, status, durationMs, error }) => {
+        onNodeStatus: ({ nodeId, status, durationMs, error, result, output }) => {
           // 1. Update visual node in canvas
           setNodes((currentNodes) =>
             currentNodes.map((n) =>
@@ -493,7 +539,16 @@ function WorkflowEditor({
                           ? 'success'
                           : status === 'FAILED'
                             ? 'error'
+                            : status === 'SKIPPED'
+                              ? 'skipped'
                             : 'idle',
+                    conditionResult: status === 'RUNNING'
+                      ? undefined
+                      : typeof result === 'boolean'
+                        ? result
+                        : typeof output?.result === 'boolean'
+                          ? output.result
+                          : n.data.conditionResult,
                   },
                 }
                 : n,
