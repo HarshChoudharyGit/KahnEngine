@@ -94,6 +94,16 @@ const nodeOptions = [
     configType: 'httpRequest',
   },
   {
+    title: 'If / Else',
+    subtitle: 'Evaluate a condition and route execution through the matching branch.',
+    category: 'LOGIC',
+    group: 'Logic / Flow Control',
+    icon: GitBranch,
+    accent: '#a78bfa',
+    configType: 'condition',
+    isCondition: true,
+  },
+  {
     title: 'Webhook Trigger',
     subtitle: 'Start from an incoming HTTP request',
     category: 'TRIGGER',

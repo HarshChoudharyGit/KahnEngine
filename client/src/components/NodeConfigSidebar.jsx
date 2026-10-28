@@ -59,7 +59,7 @@ function NodeConfigPanel({ node, nodes, edges, onClose, onDelete, onSave, onInva
 
   const handleSave = (event) => {
     event.preventDefault()
-    let validationErrors = {}
+    let validationErrors
     try {
       validationErrors = typeof schema.validate === 'function' ? schema.validate(draft) : {}
     } catch (err) {
@@ -222,9 +222,10 @@ function NodeConfigPanel({ node, nodes, edges, onClose, onDelete, onSave, onInva
 }
 
 function NodeConfigSidebar({ node, ...props }) {
+  const configType = node?.data?.configType || node?.data?.type || node?.type || node?.data?.title
   return (
     <AnimatePresence>
-      {node && <NodeConfigPanel key={node.id} node={node} {...props} />}
+      {node && <NodeConfigPanel key={`${node.id}:${configType}`} node={node} {...props} />}
     </AnimatePresence>
   )
 }
