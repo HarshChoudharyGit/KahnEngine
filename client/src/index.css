@@ -106,6 +106,10 @@
    min-width: 210px;
  }
 
+ .workflow-node--condition {
+   min-width: 210px;
+ }
+
  .workflow-node.is-selected {
    border-color: #c76c4d;
    box-shadow: 0 0 0 1px rgb(199 108 77 / 24%), 0 8px 24px rgb(0 0 0 / 38%);

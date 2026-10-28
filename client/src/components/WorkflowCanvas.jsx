@@ -79,7 +79,7 @@ function WorkflowNode({ id, data, selected }) {
     <div className={`workflow-node${isCondition ? ' workflow-node--condition' : ''}${selected ? ' is-selected' : ''}${status === 'running' ? ' is-running shadow-[0_0_15px_rgba(212,173,88,0.35)] ring-1 ring-[#d4ad58]' : status === 'success' ? ' ring-1 ring-emerald-500/40' : status === 'error' ? ' ring-1 ring-rose-500/40' : ''}`}>
       <NodeResizer
         isVisible={selected}
-        minWidth={180}
+        minWidth={isCondition ? 210 : 180}
         minHeight={84}
         maxWidth={520}
         maxHeight={320}
