@@ -161,6 +161,11 @@ function SideBar({ onGoHome, onGoDashboard, onGoEditor, onLoadTemplate }) {
             <article key={template.id} className="rounded-lg border border-[#8e7139]/25 bg-[#100d0a] p-3">
               <h3 className="text-sm font-medium text-[#f0e5c9]">{template.name}</h3>
               <p className="mt-1 text-xs leading-5 text-[#9d9076]">{template.description}</p>
+              {template.requirements && (
+                <p className="mt-2 text-[10px] leading-4 text-[#c9b991]">
+                  Requires: {template.requirements.join(' · ')}
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => {

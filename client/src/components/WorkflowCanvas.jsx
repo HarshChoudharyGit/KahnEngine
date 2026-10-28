@@ -61,6 +61,7 @@ function WorkflowNode({ id, data, selected }) {
   const NodeIcon = data.icon ?? Sparkles
   const status = data.status ?? 'idle'
   const isCondition = data.isCondition || data.configType === 'condition'
+  const isLoop = data.isLoop || data.configType === 'loop'
   const statusText = {
     idle: 'Idle',
     running: 'Working…',
@@ -79,17 +80,24 @@ function WorkflowNode({ id, data, selected }) {
   }[configurationStatus]
 
   return (
-    <div className={`workflow-node${isCondition ? ' workflow-node--condition' : ''}${selected ? ' is-selected' : ''}${status === 'running' ? ' is-running shadow-[0_0_15px_rgba(212,173,88,0.35)] ring-1 ring-[#d4ad58]' : status === 'success' ? ' ring-1 ring-emerald-500/40' : status === 'error' ? ' ring-1 ring-rose-500/40' : ''}`}>
+    <div className={`workflow-node${isCondition ? ' workflow-node--condition' : ''}${isLoop ? ' workflow-node--loop' : ''}${selected ? ' is-selected' : ''}${status === 'running' ? ' is-running shadow-[0_0_15px_rgba(212,173,88,0.35)] ring-1 ring-[#d4ad58]' : status === 'success' ? ' ring-1 ring-emerald-500/40' : status === 'error' ? ' ring-1 ring-rose-500/40' : ''}`}>
       <NodeResizer
         isVisible={selected}
-        minWidth={isCondition ? 210 : 180}
+        minWidth={isCondition || isLoop ? 220 : 180}
         minHeight={84}
         maxWidth={520}
         maxHeight={320}
         color="#d4ad58"
         handleStyle={{ width: 8, height: 8, borderRadius: 2 }}
       />
-      <Handle type="target" position={Position.Left} className="workflow-handle" />
+      {isLoop ? (
+        <>
+          <Handle id="loop-input" type="target" position={Position.Left} className="workflow-handle workflow-handle--loop-input" />
+          <span className="workflow-node__input-label">IN</span>
+        </>
+      ) : (
+        <Handle type="target" position={Position.Left} className="workflow-handle" />
+      )}
       {data.category === 'TRIGGER' && (
         <span className="workflow-node__badge flex items-center gap-1.5" style={{ backgroundColor: data.accent }}>
           <Sparkles aria-hidden="true" className="h-3 w-3" /> {data.category}
@@ -106,7 +114,9 @@ function WorkflowNode({ id, data, selected }) {
               ? data.configuration?.leftValue
                 ? getConditionSummary(data.configuration, workflowNodes)
                 : 'Set up a condition'
-              : data.subtitle}
+              : isLoop && data.loopProgress?.status?.startsWith('iteration_')
+                ? `Iteration ${data.loopProgress.iteration} of ${data.loopProgress.total}`
+                : data.subtitle}
           </span>
         </div>
         <span className={`workflow-node__status workflow-node__status--${status}`} aria-label={`Node status: ${conditionResult === undefined ? statusText : conditionResult ? 'TRUE' : 'FALSE'}`}>
@@ -139,6 +149,13 @@ function WorkflowNode({ id, data, selected }) {
           <span className="workflow-node__branch-label workflow-node__branch-label--true">TRUE</span>
           <Handle id="false" type="source" position={Position.Right} style={{ top: '68%' }} className="workflow-handle workflow-handle--false" />
           <span className="workflow-node__branch-label workflow-node__branch-label--false">FALSE</span>
+        </>
+      ) : isLoop ? (
+        <>
+          <Handle id="loop-body" type="source" position={Position.Right} style={{ top: '38%' }} className="workflow-handle workflow-handle--loop-body" />
+          <span className="workflow-node__branch-label workflow-node__branch-label--loop-body">BODY</span>
+          <Handle id="loop-next" type="source" position={Position.Right} style={{ top: '68%' }} className="workflow-handle workflow-handle--loop-next" />
+          <span className="workflow-node__branch-label workflow-node__branch-label--loop-next">NEXT</span>
         </>
       ) : (
         <Handle type="source" position={Position.Right} className="workflow-handle" />
@@ -177,6 +194,12 @@ function getBranchEdgeStyle(sourceNode, sourceHandle) {
   if ((sourceNode?.data?.configType === 'condition' || sourceNode?.data?.isCondition) && sourceHandle === 'false') {
     return falseBranchEdgeStyle
   }
+  if ((sourceNode?.data?.configType === 'loop' || sourceNode?.data?.isLoop) && sourceHandle === 'loop-body') {
+    return { stroke: '#5aa9a0', strokeWidth: 2, strokeDasharray: '6 4' }
+  }
+  if ((sourceNode?.data?.configType === 'loop' || sourceNode?.data?.isLoop) && sourceHandle === 'loop-next') {
+    return { stroke: '#c69b45', strokeWidth: 2 }
+  }
   return edgeStyle
 }
 
@@ -184,12 +207,16 @@ function hydrateWorkflowEdges(edges, nodes) {
   if (!Array.isArray(edges)) return initialEdges
   return edges.map((edge) => {
     const sourceNode = nodes.find((node) => node.id === edge.source)
-    const isCondition = sourceNode?.data?.configType === 'condition' || sourceNode?.data?.isCondition
+    const isSpecialEdge = (sourceNode?.data?.configType === 'condition' || sourceNode?.data?.isCondition)
+      ? ['true', 'false'].includes(edge.sourceHandle)
+      : (sourceNode?.data?.configType === 'loop' || sourceNode?.data?.isLoop)
+        ? ['loop-body', 'loop-next'].includes(edge.sourceHandle)
+        : false
     return {
       ...edge,
       type: edge.type || 'smoothstep',
       animated: edge.animated !== undefined ? edge.animated : true,
-      style: isCondition && (edge.sourceHandle === 'true' || edge.sourceHandle === 'false')
+      style: isSpecialEdge
         ? getBranchEdgeStyle(sourceNode, edge.sourceHandle)
         : edge.style || edgeStyle,
     }
@@ -249,7 +276,13 @@ function WorkflowEditor({
   }
 
   const workflowIdRef = useRef(
-    loadedWorkflow?.id || (templateWorkflow?.id ? `wf_${templateWorkflow.id}` : `wf_${Date.now()}`),
+    loadedWorkflow?.id || (
+      templateWorkflow?.id
+        ? `wf_${templateWorkflow.id}`
+        : selectedTemplate?.id
+          ? `wf_${selectedTemplate.id}_${Date.now()}`
+          : `wf_${Date.now()}`
+    ),
   )
   const nextNodeId = useRef(initialCanvasNodes.length + 10)
   const activeStreamCloseRef = useRef(null)
@@ -517,7 +550,7 @@ function WorkflowEditor({
     // 1. Create candidate edge set
     const candidateEdge = {
       ...connection,
-      id: `e-${connection.source}-${connection.target}`,
+      id: `e-${connection.source}-${connection.sourceHandle || 'default'}-${connection.target}`,
       type: 'smoothstep',
       animated: true,
       style: getBranchEdgeStyle(
@@ -592,7 +625,7 @@ function WorkflowEditor({
     setNodes((currentNodes) =>
       currentNodes.map((node) => ({
         ...node,
-        data: { ...node.data, status: 'idle', conditionResult: undefined },
+        data: { ...node.data, status: 'idle', conditionResult: undefined, loopProgress: undefined },
       })),
     )
 
@@ -784,6 +817,15 @@ function WorkflowEditor({
 
               return { ...item, steps: nextSteps }
             }),
+          )
+        },
+        onLoopProgress: (progress) => {
+          setNodes((currentNodes) =>
+            currentNodes.map((node) =>
+              node.id === progress.loopNodeId
+                ? { ...node, data: { ...node.data, loopProgress: progress } }
+                : node,
+            ),
           )
         },
         onNodeLog: (logEntry) => {

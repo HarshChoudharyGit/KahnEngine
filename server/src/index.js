@@ -74,6 +74,5 @@ try {
     message: err.message,
     code: err.cause?.code || err.code || 'UNKNOWN',
   }, 'Server startup failed');
-  await closeDB();
-  process.exitCode = 1;
+  process.exit(1);
 }

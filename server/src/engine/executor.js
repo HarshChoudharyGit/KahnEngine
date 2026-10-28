@@ -104,7 +104,171 @@ function resolveTemplateString(str, context) {
  * Executes a workflow graph deterministically using topological ordering.
  * Pushes real-time SSE telemetry events for every node transition.
  */
-export async function executeWorkflow(workflow, executionId, triggerPayload = {}) {
+function nodeTypeOf(node) {
+  return String(node.data?.configType || node.data?.type || node.type || '').toLowerCase();
+}
+
+function getLoopPlans(nodes, edges, topologicalOrder) {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const outgoing = new Map(nodes.map((node) => [node.id, []]));
+  for (const edge of edges) {
+    if (outgoing.has(edge.source) && nodeIds.has(edge.target)) {
+      outgoing.get(edge.source).push(edge);
+    }
+  }
+
+  const reachable = (roots, excluded = new Set()) => {
+    const visited = new Set();
+    const pending = [...roots];
+    while (pending.length) {
+      const current = pending.pop();
+      if (!current || visited.has(current) || excluded.has(current)) continue;
+      visited.add(current);
+      for (const edge of outgoing.get(current) || []) pending.push(edge.target);
+    }
+    return visited;
+  };
+
+  const plans = new Map();
+  for (const node of nodes.filter((candidate) => nodeTypeOf(candidate) === 'loop')) {
+    const loopEdges = outgoing.get(node.id) || [];
+    if (loopEdges.some((edge) => !['loop-body', 'loop-next'].includes(edge.sourceHandle))) {
+      throw new Error(`Loop node "${node.id}" connections must use the Loop Body or Continue handle.`);
+    }
+    const bodyRoots = loopEdges
+      .filter((edge) => edge.sourceHandle === 'loop-body')
+      .map((edge) => edge.target);
+    const nextRoots = loopEdges
+      .filter((edge) => edge.sourceHandle === 'loop-next')
+      .map((edge) => edge.target);
+    if (bodyRoots.length === 0) {
+      throw new Error(`Loop node "${node.id}" needs at least one connection from its Loop Body handle.`);
+    }
+
+    const continuationIds = reachable(nextRoots);
+    const bodyIds = reachable(bodyRoots, continuationIds);
+    bodyIds.delete(node.id);
+    if (bodyIds.size === 0) {
+      throw new Error(`Loop node "${node.id}" has no loop-body nodes outside its Continue path.`);
+    }
+    plans.set(node.id, { bodyIds, nodes: [] });
+  }
+
+  for (const [loopId, plan] of plans) {
+    const nestedBodyIds = new Set();
+    for (const [nestedLoopId, nestedPlan] of plans) {
+      if (nestedLoopId !== loopId && plan.bodyIds.has(nestedLoopId)) {
+        for (const bodyId of nestedPlan.bodyIds) nestedBodyIds.add(bodyId);
+      }
+    }
+    plan.nodes = topologicalOrder.filter((node) =>
+      plan.bodyIds.has(node.id) && !nestedBodyIds.has(node.id),
+    );
+  }
+
+  return {
+    plans,
+    bodyIds: new Set([...plans.values()].flatMap((plan) => [...plan.bodyIds])),
+  };
+}
+
+function getConditionalPlans(nodes, edges) {
+  const nodeTypes = new Map(nodes.map((node) => [node.id, nodeTypeOf(node)]));
+  const outgoing = new Map(nodes.map((node) => [node.id, []]));
+  for (const edge of edges) {
+    if (outgoing.has(edge.source) && nodeTypes.has(edge.target)) {
+      outgoing.get(edge.source).push(edge);
+    }
+  }
+
+  const reachable = (roots) => {
+    const visited = new Set();
+    const pending = [...roots];
+    while (pending.length) {
+      const current = pending.pop();
+      if (!current || visited.has(current)) continue;
+      visited.add(current);
+      for (const edge of outgoing.get(current) || []) pending.push(edge.target);
+    }
+    return visited;
+  };
+
+  const plans = new Map();
+  for (const node of nodes.filter((candidate) => nodeTypeOf(candidate) === 'condition')) {
+    const conditionEdges = outgoing.get(node.id) || [];
+    if (!conditionEdges.some((edge) => ['true', 'false'].includes(edge.sourceHandle))) continue;
+    const trueReachable = reachable(
+      conditionEdges.filter((edge) => edge.sourceHandle === 'true').map((edge) => edge.target),
+    );
+    const falseReachable = reachable(
+      conditionEdges.filter((edge) => edge.sourceHandle === 'false').map((edge) => edge.target),
+    );
+    const shared = new Set([...trueReachable].filter((id) => falseReachable.has(id)));
+    plans.set(node.id, {
+      trueOnly: new Set([...trueReachable].filter((id) => !shared.has(id))),
+      falseOnly: new Set([...falseReachable].filter((id) => !shared.has(id))),
+    });
+  }
+  return plans;
+}
+
+function skipUnselectedConditionBranch(nodeId, outcome, plans, skippedNodeIds, scopeIds) {
+  const plan = plans.get(nodeId);
+  if (!plan) return;
+  const unselected = outcome ? plan.falseOnly : plan.trueOnly;
+  for (const branchNodeId of unselected) {
+    if (!scopeIds || scopeIds.has(branchNodeId)) skippedNodeIds.add(branchNodeId);
+  }
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  const error = new Error(signal.reason?.message || 'Workflow execution was cancelled.');
+  error.name = 'AbortError';
+  throw error;
+}
+
+function waitForDelay(durationMs, signal) {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }, durationMs);
+    const abort = () => {
+      clearTimeout(timer);
+      const error = signal.reason instanceof Error
+        ? signal.reason
+        : new Error(signal.reason?.message || 'Workflow execution was cancelled.');
+      error.name ||= 'AbortError';
+      reject(error);
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+
+function loopLimit(value, label, fallback) {
+  const number = value === undefined || value === null || value === '' ? fallback : Number(value);
+  if (!Number.isInteger(number) || number < 1 || number > 1000) {
+    throw new Error(`Loop ${label} must be a whole number from 1 to 1000.`);
+  }
+  return number;
+}
+
+const defaultPersistence = {
+  appendLog,
+  finishNodeExecution,
+  startExecution,
+  startNodeExecution,
+  updateExecution,
+};
+
+export async function executeWorkflow(
+  workflow,
+  executionId,
+  triggerPayload = {},
+  { signal, persistence = defaultPersistence, integrations = {} } = {},
+) {
   const { nodes = [], edges = [] } = workflow;
   const executionStartMs = Date.now();
 
@@ -113,7 +277,7 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
     const kahnResult = runKahnsAlgorithm(nodes, edges);
     if (!kahnResult.isValid) {
       const errorMsg = kahnResult.error || 'Cycle detected in graph';
-      await updateExecution(executionId, {
+      await persistence.updateExecution(executionId, {
         status: 'FAILED',
         error: errorMsg,
         completedAt: new Date().toISOString(),
@@ -126,6 +290,22 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
         cycleNodes: kahnResult.cycleNodes,
         durationMs: Date.now() - executionStartMs,
       });
+      return;
+    }
+
+    let loopPlans;
+    let conditionalPlans;
+    try {
+      loopPlans = getLoopPlans(nodes, edges, kahnResult.topologicalOrder);
+      conditionalPlans = getConditionalPlans(nodes, edges);
+    } catch (err) {
+      await persistence.updateExecution(executionId, {
+        status: 'FAILED',
+        error: err.message,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - executionStartMs,
+      });
+      memoryStore.broadcastTelemetry(executionId, 'execution_failed', { executionId, error: err.message });
       return;
     }
 
@@ -147,44 +327,283 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
       },
     };
 
+    const enrichedTrigger = {
+      repository: { full_name: repo, name: repo.split('/')[1] || repo },
+      ref: `refs/heads/${branch}`,
+      head_commit: defaultCommit,
+      payload: {
+        repository: { full_name: repo, name: repo.split('/')[1] || repo },
+        head_commit: defaultCommit,
+      },
+      ...triggerPayload,
+    };
+
     // Node context storage (passing outputs between nodes)
     const context = {
       executionId,
-      trigger: {
-        repository: { full_name: repo, name: repo.split('/')[1] || repo },
-        ref: `refs/heads/${branch}`,
-        head_commit: defaultCommit,
-        payload: {
-          repository: { full_name: repo, name: repo.split('/')[1] || repo },
-          ref: `refs/heads/${branch}`,
-          head_commit: defaultCommit,
-          commits: [defaultCommit],
-          action: 'opened',
-          issue: {
-            number: 42,
-            title: 'Automated Issue Notification',
-            body: 'Workflow notification executed successfully.',
-            user: { login: 'developer' },
-            html_url: `https://github.com/${repo}/issues/42`,
-            created_at: nowIso,
-          },
-        },
-        ...triggerPayload,
-      },
+      trigger: enrichedTrigger,
       outputs: {},
       nodes: {},
+      signal,
+      integrations,
+    };
+    const topLevelSkippedNodes = new Set();
+    const markNodeSkipped = async (node, loopMeta = null) => {
+      await persistence.finishNodeExecution(executionId, {
+        nodeId: node.id,
+        status: 'skipped',
+        output: null,
+        error: null,
+      });
+      memoryStore.broadcastTelemetry(executionId, 'node_status', {
+        nodeId: node.id,
+        status: 'SKIPPED',
+        ...(loopMeta || {}),
+        timestamp: Date.now(),
+      });
     };
 
-    await startExecution(executionId, nodes);
+    await persistence.startExecution(executionId, nodes);
     memoryStore.broadcastTelemetry(executionId, 'execution_started', {
       executionId,
       workflowId: workflow.id,
       topologicalOrder: kahnResult.topologicalOrder.map((n) => n.id),
     });
 
+    const executeLoopBodyNode = async (node, loopMeta) => {
+      throwIfAborted(signal);
+      const nodeId = node.id;
+      const nodeLabel = node.data?.title || node.data?.label || nodeId;
+      const nodeType = nodeTypeOf(node) || 'default';
+      const nodeStartMs = Date.now();
+      const incomingEdges = edges.filter((edge) => edge.target === nodeId);
+      node._incomingEdges = incomingEdges;
+      node._predecessorIds = incomingEdges.map((edge) => edge.source);
+
+      await persistence.startNodeExecution(executionId, {
+        nodeId,
+        nodeType,
+        input: {
+          nodeTitle: nodeLabel,
+          trigger: context.trigger,
+          outputs: context.outputs,
+          nodes: context.nodes,
+          loop: context.loop,
+        },
+      });
+      memoryStore.broadcastTelemetry(executionId, 'node_status', {
+        nodeId,
+        status: 'RUNNING',
+        totalSteps: kahnResult.topologicalOrder.length,
+        ...loopMeta,
+        timestamp: Date.now(),
+      });
+
+      let logQueue = Promise.resolve();
+      let logPersistenceError = null;
+      const log = (message, level = 'INFO') => {
+        const entry = sanitizeLogEntry({
+          nodeId,
+          nodeTitle: nodeLabel,
+          level,
+          message,
+          timestamp: Date.now(),
+          ...loopMeta,
+        });
+        logQueue = logQueue.then(() => persistence.appendLog(executionId, entry)).catch((err) => {
+          logPersistenceError ||= err;
+        });
+        memoryStore.broadcastTelemetry(executionId, 'node_log', entry);
+        return logQueue;
+      };
+
+      log(`[Loop iteration ${loopMeta.iteration}] Starting: "${nodeLabel}" (${nodeType})`);
+      try {
+        const nestedLoopPlan = loopPlans.plans.get(nodeId);
+        const result = nestedLoopPlan
+          ? await executeLoop(node, nestedLoopPlan, log)
+          : await executeSingleNode(node, context, log);
+        throwIfAborted(signal);
+        await logQueue;
+        if (logPersistenceError) {
+          throw new Error('Could not persist workflow execution log', { cause: logPersistenceError });
+        }
+        const durationMs = Date.now() - nodeStartMs;
+        context.outputs[nodeId] = result;
+        context.nodes[nodeId] = {
+          id: nodeId,
+          type: nodeType,
+          title: nodeLabel,
+          configType: node.data?.configType || nodeType,
+          output: result,
+        };
+        if (nodeType === 'condition') {
+          skipUnselectedConditionBranch(
+            nodeId,
+            Boolean(result.result),
+            conditionalPlans,
+            context.loopSkippedNodes,
+            context.loopScopeIds,
+          );
+        }
+        await persistence.finishNodeExecution(executionId, { nodeId, status: 'completed', output: result });
+        memoryStore.broadcastTelemetry(executionId, 'node_status', {
+          nodeId,
+          status: 'SUCCESS',
+          durationMs,
+          output: result,
+          ...loopMeta,
+          timestamp: Date.now(),
+        });
+        log(`Node "${nodeLabel}" completed successfully in ${durationMs}ms.`);
+        await logQueue;
+        if (logPersistenceError) {
+          throw new Error('Could not persist workflow execution log', { cause: logPersistenceError });
+        }
+        return result;
+      } catch (err) {
+        await logQueue;
+        const durationMs = Date.now() - nodeStartMs;
+        await persistence.finishNodeExecution(executionId, {
+          nodeId,
+          status: 'failed',
+          output: null,
+          error: err.message,
+        });
+        memoryStore.broadcastTelemetry(executionId, 'node_status', {
+          nodeId,
+          status: 'FAILED',
+          error: err.message,
+          durationMs,
+          ...loopMeta,
+          timestamp: Date.now(),
+        });
+        log(`Node "${nodeLabel}" failed: ${err.message}`, 'ERROR');
+        await logQueue;
+        throw err;
+      }
+    };
+
+    const executeLoop = async (node, plan, log) => {
+      const config = resolveExpressions(node.data?.configuration || node.data || {}, context);
+      const mode = config.mode || 'forEach';
+      if (!['forEach', 'fixed'].includes(mode)) {
+        throw new Error(`Loop node "${node.id}" has an unsupported mode.`);
+      }
+
+      const maxIterations = loopLimit(config.maxIterations, 'maximum iterations', 100);
+      let items;
+      if (mode === 'forEach') {
+        if (!Array.isArray(config.arrayExpression)) {
+          throw new Error(`Loop node "${node.id}" array input must resolve to an array.`);
+        }
+        if (config.arrayExpression.length > maxIterations) {
+          throw new Error(`Loop node "${node.id}" received ${config.arrayExpression.length} items, exceeding its maximum of ${maxIterations}.`);
+        }
+        items = config.arrayExpression;
+      } else {
+        const count = loopLimit(config.iterations, 'iteration count', 1);
+        if (count > maxIterations) {
+          throw new Error(`Loop node "${node.id}" iteration count ${count} exceeds its maximum of ${maxIterations}.`);
+        }
+        items = Array.from({ length: count }, (_, index) => index);
+      }
+
+      const previousLoop = context.loop;
+      const results = [];
+      let completedIterations = 0;
+      let activeIteration = null;
+      const previousSkippedNodes = context.loopSkippedNodes;
+      const previousScopeIds = context.loopScopeIds;
+      const progress = (status, values = {}) => memoryStore.broadcastTelemetry(executionId, 'loop_progress', {
+        loopNodeId: node.id,
+        status,
+        completedIterations,
+        total: items.length,
+        ...values,
+        timestamp: Date.now(),
+      });
+      log(`Loop started in ${mode} mode for ${items.length} iteration(s).`);
+      progress('started');
+
+      try {
+        for (let index = 0; index < items.length; index += 1) {
+          throwIfAborted(signal);
+          activeIteration = index + 1;
+          const item = mode === 'forEach' ? items[index] : undefined;
+          context.loop = { item, index, iteration: index + 1, total: items.length };
+          context.loopSkippedNodes = new Set();
+          context.loopScopeIds = new Set(plan.nodes.map((bodyNode) => bodyNode.id));
+          for (const bodyNode of plan.nodes) {
+            delete context.outputs[bodyNode.id];
+            delete context.nodes[bodyNode.id];
+          }
+
+          progress('iteration_started', { index, iteration: index + 1 });
+          log(`Loop iteration ${index + 1}/${items.length} started.`);
+          const iterationOutputs = {};
+          try {
+            for (const bodyNode of plan.nodes) {
+              if (context.loopSkippedNodes.has(bodyNode.id)) {
+                await markNodeSkipped(bodyNode, {
+                  loopNodeId: node.id,
+                  loopIndex: index,
+                  iteration: index + 1,
+                });
+                continue;
+              }
+              throwIfAborted(signal);
+              iterationOutputs[bodyNode.id] = await executeLoopBodyNode(
+                bodyNode,
+                { loopNodeId: node.id, loopIndex: index, iteration: index + 1 },
+              );
+            }
+          } catch (err) {
+            progress('iteration_failed', { index, iteration: index + 1, error: err.message });
+            throw new Error(
+              `Loop node "${node.id}" failed at iteration ${index + 1} (index ${index}): ${err.message}`,
+              { cause: err },
+            );
+          }
+
+          results.push({ index, iteration: index + 1, item, outputs: iterationOutputs });
+          completedIterations += 1;
+          activeIteration = null;
+          progress('iteration_completed', { index, iteration: index + 1 });
+          log(`Loop iteration ${index + 1}/${items.length} completed.`);
+        }
+      } catch (err) {
+        err.loopOutput = {
+          items,
+          results,
+          total: items.length,
+          completed: false,
+          completedIterations,
+          failedIteration: activeIteration,
+        };
+        progress('failed', { error: err.message, failedIteration: activeIteration });
+        log(`Loop failed after ${completedIterations}/${items.length} completed iteration(s): ${err.message}`, 'ERROR');
+        throw err;
+      } finally {
+        context.loop = previousLoop;
+        context.loopSkippedNodes = previousSkippedNodes;
+        context.loopScopeIds = previousScopeIds;
+      }
+
+      const output = { items, results, total: items.length, completed: true };
+      progress('completed');
+      log(`Loop completed ${completedIterations}/${items.length} iteration(s).`);
+      return output;
+    };
+
     // 2. Execute nodes sequentially in topological order
     for (let i = 0; i < kahnResult.topologicalOrder.length; i++) {
       const node = kahnResult.topologicalOrder[i];
+      if (loopPlans.bodyIds.has(node.id)) continue;
+      if (topLevelSkippedNodes.has(node.id)) {
+        await markNodeSkipped(node);
+        continue;
+      }
       const nodeId = node.id;
       const nodeLabel = node.data?.title || node.data?.label || nodeId;
       const nodeType = (node.data?.configType || node.data?.type || node.type || 'default').toLowerCase();
@@ -195,7 +614,7 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
       node._incomingEdges = incomingEdges;
       node._predecessorIds = predecessorNodeIds;
 
-      await startNodeExecution(executionId, {
+      await persistence.startNodeExecution(executionId, {
         nodeId,
         nodeType,
         input: {
@@ -220,7 +639,7 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
       const log = (message, level = 'INFO') => {
         const entry = sanitizeLogEntry({ nodeId, nodeTitle: nodeLabel, level, message, timestamp: Date.now() });
         logQueue = logQueue
-          .then(() => appendLog(executionId, entry))
+          .then(() => persistence.appendLog(executionId, entry))
           .catch((err) => {
             logPersistenceError ||= err;
           });
@@ -231,7 +650,12 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
       log(`[Step ${i + 1}/${kahnResult.topologicalOrder.length}] Starting: "${nodeLabel}" (${nodeType})`);
 
       try {
-        const result = await executeSingleNode(node, context, log);
+        throwIfAborted(signal);
+        const loopPlan = loopPlans.plans.get(nodeId);
+        const result = loopPlan
+          ? await executeLoop(node, loopPlan, log)
+          : await executeSingleNode(node, context, log);
+        throwIfAborted(signal);
         await logQueue;
         if (logPersistenceError) {
           throw new Error('Could not persist workflow execution log', { cause: logPersistenceError });
@@ -245,9 +669,18 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
           configType: node.data?.configType || nodeType,
           output: result,
         };
+        if (nodeType === 'condition') {
+          skipUnselectedConditionBranch(
+            nodeId,
+            Boolean(result.result),
+            conditionalPlans,
+            topLevelSkippedNodes,
+            new Set(nodes.map((candidate) => candidate.id)),
+          );
+        }
 
         // Broadcast node SUCCESS
-        await finishNodeExecution(executionId, {
+        await persistence.finishNodeExecution(executionId, {
           nodeId,
           status: 'completed',
           output: result,
@@ -270,13 +703,13 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
         const totalDurationMs = Date.now() - executionStartMs;
 
         // Broadcast node FAILED
-        await finishNodeExecution(executionId, {
+        await persistence.finishNodeExecution(executionId, {
           nodeId,
           status: 'failed',
-          output: null,
+          output: err.loopOutput || null,
           error: err.message,
         });
-        await updateExecution(executionId, {
+        await persistence.updateExecution(executionId, {
           status: 'FAILED',
           error: err.message,
           completedAt: new Date().toISOString(),
@@ -308,7 +741,7 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
 
     // All nodes succeeded
     const totalDurationMs = Date.now() - executionStartMs;
-    await updateExecution(executionId, {
+    await persistence.updateExecution(executionId, {
       status: 'SUCCESS',
       completedAt: new Date().toISOString(),
       durationMs: totalDurationMs,
@@ -321,7 +754,7 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
   } catch (fatalErr) {
     const totalDurationMs = Date.now() - executionStartMs;
     try {
-      await updateExecution(executionId, {
+      await persistence.updateExecution(executionId, {
         status: 'FAILED',
         error: fatalErr.message,
         completedAt: new Date().toISOString(),
@@ -338,9 +771,6 @@ export async function executeWorkflow(workflow, executionId, triggerPayload = {}
   }
 }
 
-/**
- * Redacts sensitive tokens, passwords, and API keys from string values before logging.
- */
 export function redactSensitive(text) {
   if (typeof text !== 'string') {
     if (text === null || text === undefined) return '';
@@ -402,6 +832,8 @@ export function resolveVariablePath(pathStr, context) {
 
   if (root === 'trigger') {
     current = context.trigger;
+  } else if (root === 'loop') {
+    current = context.loop;
   } else if (root === 'outputs') {
     const targetKey = parts[1];
     remainingParts = parts.slice(2);
@@ -491,6 +923,13 @@ async function executeSingleNode(node, context, log) {
   const nodeType = (node.data?.configType || node.data?.type || node.type || '').toLowerCase();
   const rawConfig = node.data?.configuration || node.data || {};
   const config = resolveExpressions(rawConfig, context);
+  const integrations = context.integrations || {};
+  const gmailConnected = integrations.isGmailConnected || isGmailConnected;
+  const gmailUser = integrations.getGmailUser || getGmailUser;
+  const sendGmail = integrations.sendEmail || sendEmail;
+  const searchGmail = integrations.searchEmails || searchEmails;
+  const replyGmail = integrations.replyToEmail || replyToEmail;
+  const labelGmail = integrations.addLabel || addLabel;
 
   switch (nodeType) {
     case 'webhook':
@@ -522,7 +961,7 @@ async function executeSingleNode(node, context, log) {
         durationMs = Number(config.durationMs);
       }
       log(`Pausing workflow execution for ${durationMs}ms...`);
-      await new Promise((resolve) => setTimeout(resolve, durationMs));
+      await waitForDelay(durationMs, context.signal);
       return { delayedMs: durationMs };
     }
 
@@ -531,11 +970,14 @@ async function executeSingleNode(node, context, log) {
       log('Executing custom transform script...');
       if (config.code) {
         try {
-          const fn = new Function('trigger', 'context', 'outputs', config.code);
-          const res = fn(context.trigger, context, context.outputs);
+          const fn = new Function('trigger', 'context', 'outputs', 'config', config.code);
+          const res = fn(context.trigger, context, context.outputs, config);
           log(`Transform output: ${JSON.stringify(res)?.slice(0, 100)}`);
           return res !== undefined ? res : { transformed: true };
         } catch (err) {
+          if (config.failOnError) {
+            throw new Error(`Transform failed: ${err.message}`, { cause: err });
+          }
           log(`Transform script evaluation note: ${err.message}. Using safe projected fallback.`, 'WARN');
           return { transformedAt: new Date().toISOString(), input: context.trigger };
         }
@@ -549,87 +991,136 @@ async function executeSingleNode(node, context, log) {
       let url = config.url || 'https://jsonplaceholder.typicode.com/posts/1';
       const method = (config.method || 'GET').toUpperCase();
 
-      const headers = { Accept: 'application/json' };
-      if (Array.isArray(config.headers)) {
-        for (const h of config.headers) {
-          if (h.key && h.key.trim()) headers[h.key.trim()] = h.value || '';
-        }
-      } else if (config.headers && typeof config.headers === 'object') {
-        Object.assign(headers, config.headers);
-      }
-
-      if (config.authentication === 'bearer') {
-        headers.Authorization = `Bearer ${config.bearerToken}`;
-      } else if (config.authentication === 'apiKey') {
-        headers[config.apiKeyName] = config.apiKeyValue;
-      } else if (config.authentication === 'basic' && (config.basicUsername || config.basicPassword)) {
-        const credentials = Buffer.from(`${config.basicUsername || ''}:${config.basicPassword || ''}`).toString('base64');
-        headers.Authorization = `Basic ${credentials}`;
-      }
-
-      if (Array.isArray(config.queryParams) && config.queryParams.length > 0) {
-        const query = new URLSearchParams();
-        for (const q of config.queryParams) {
-          if (q.key && q.key.trim()) query.append(q.key.trim(), q.value || '');
-        }
-        const queryString = query.toString();
-        if (queryString) {
-          url += (url.includes('?') ? '&' : '?') + queryString;
-        }
-      }
-
-      log(`Dispatching HTTP ${method} request to ${url}`);
-
-      let body = undefined;
-      if (['POST', 'PUT', 'PATCH'].includes(method) && config.body) {
-        headers['Content-Type'] = headers['Content-Type'] || 'application/json';
-        body = typeof config.body === 'string' ? config.body : JSON.stringify(config.body);
-      }
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-      try {
-        const response = await fetch(url, {
-          method,
-          headers,
-          body,
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-
-        const responseText = await response.text();
-        let parsed;
+      let parsed;
+      let status = 200;
+      let statusText = 'OK';
+      let mocked = false;
+      if (config.mockMode) {
         try {
-          parsed = JSON.parse(responseText);
-        } catch {
-          if (/<html|<!DOCTYPE/i.test(responseText)) {
-            const titleMatch = responseText.match(/<title[^>]*>(.*?)<\/title>/i);
-            const pageTitle = titleMatch ? titleMatch[1].trim() : '';
-            const cleanText = responseText
-              .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-              .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-              .replace(/<[^>]+>/g, ' ')
-              .replace(/\s+/g, ' ')
-              .trim()
-              .slice(0, 1500);
-            parsed = pageTitle ? `${pageTitle}\n\n${cleanText}` : cleanText || responseText.slice(0, 500);
-          } else {
-            parsed = responseText.slice(0, 2000);
+          parsed = typeof config.mockResponse === 'string'
+            ? JSON.parse(config.mockResponse)
+            : config.mockResponse;
+        } catch (err) {
+          throw new Error(`HTTP mock response is not valid JSON: ${err.message}`);
+        }
+        if (!parsed || typeof parsed !== 'object') {
+          throw new Error('HTTP mock response must be a JSON object or array.');
+        }
+        mocked = true;
+        log('Using configured sample response; no external HTTP request was made.');
+      } else {
+        const headers = { Accept: 'application/json' };
+        if (Array.isArray(config.headers)) {
+          for (const h of config.headers) {
+            if (h.key && h.key.trim()) headers[h.key.trim()] = h.value || '';
+          }
+        } else if (config.headers && typeof config.headers === 'object') {
+          Object.assign(headers, config.headers);
+        }
+
+        if (config.authentication === 'bearer') {
+          headers.Authorization = `Bearer ${config.bearerToken}`;
+        } else if (config.authentication === 'apiKey') {
+          headers[config.apiKeyName] = config.apiKeyValue;
+        } else if (config.authentication === 'basic' && (config.basicUsername || config.basicPassword)) {
+          const credentials = Buffer.from(`${config.basicUsername || ''}:${config.basicPassword || ''}`).toString('base64');
+          headers.Authorization = `Basic ${credentials}`;
+        }
+
+        if (Array.isArray(config.queryParams) && config.queryParams.length > 0) {
+          const query = new URLSearchParams();
+          for (const q of config.queryParams) {
+            if (q.key && q.key.trim()) query.append(q.key.trim(), q.value || '');
+          }
+          const queryString = query.toString();
+          if (queryString) {
+            url += (url.includes('?') ? '&' : '?') + queryString;
           }
         }
 
-        log(`HTTP response status: ${response.status} (${response.statusText || 'OK'})`);
-        return {
-          status: response.status,
-          statusText: response.statusText || 'OK',
-          data: parsed,
-          text: typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2),
-        };
-      } catch (err) {
-        clearTimeout(timeoutId);
-        throw new Error(`HTTP request failed: ${err.message}`);
+        log(`Dispatching HTTP ${method} request to ${url}`);
+
+        let body = undefined;
+        if (['POST', 'PUT', 'PATCH'].includes(method) && config.body) {
+          headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+          body = typeof config.body === 'string' ? config.body : JSON.stringify(config.body);
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        const abortRequest = () => controller.abort(context.signal.reason);
+        context.signal?.addEventListener('abort', abortRequest, { once: true });
+        if (context.signal?.aborted) abortRequest();
+
+        try {
+          const response = await fetch(url, {
+            method,
+            headers,
+            body,
+            signal: controller.signal,
+          });
+
+          const responseText = await response.text();
+          try {
+            parsed = JSON.parse(responseText);
+          } catch {
+            if (/<html|<!DOCTYPE/i.test(responseText)) {
+              const titleMatch = responseText.match(/<title[^>]*>(.*?)<\/title>/i);
+              const pageTitle = titleMatch ? titleMatch[1].trim() : '';
+              const cleanText = responseText
+                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+                .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .slice(0, 1500);
+              parsed = pageTitle ? `${pageTitle}\n\n${cleanText}` : cleanText || responseText.slice(0, 500);
+            } else {
+              parsed = responseText.slice(0, 2000);
+            }
+          }
+
+          status = response.status;
+          statusText = response.statusText || 'OK';
+          log(`HTTP response status: ${response.status} (${statusText})`);
+          if (!response.ok) {
+            throw new Error(`HTTP response was not successful: ${response.status} ${statusText}`);
+          }
+        } catch (err) {
+          throw new Error(`HTTP request failed: ${err.message}`, { cause: err });
+        } finally {
+          clearTimeout(timeoutId);
+          context.signal?.removeEventListener('abort', abortRequest);
+        }
       }
+
+      let jobs;
+      if (config.responsePath?.trim()) {
+        const pathParts = config.responsePath.trim().replace(/\[(\d+)\]/g, '.$1').split('.');
+        let extracted = parsed;
+        for (const part of pathParts) {
+          if (!part || part === '__proto__' || part === 'constructor' || part === 'prototype' ||
+            extracted === null || typeof extracted !== 'object' ||
+            !Object.hasOwn(extracted, part)) {
+            extracted = undefined;
+            break;
+          }
+          extracted = extracted[part];
+        }
+        if (!Array.isArray(extracted)) {
+          throw new Error(`HTTP response path "${config.responsePath}" did not resolve to an array.`);
+        }
+        jobs = extracted;
+      }
+
+      return {
+        status,
+        statusText,
+        data: parsed,
+        text: typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2),
+        ...(jobs ? { jobs, totalJobs: jobs.length } : {}),
+        ...(mocked ? { mocked: true } : {}),
+      };
     }
 
     case 'github':
@@ -673,16 +1164,16 @@ async function executeSingleNode(node, context, log) {
     case 'gmailtrigger': {
       const event = config.event || 'new_email';
       const label = config.label || 'INBOX';
-      const connected = isGmailConnected();
-      const gmailUser = getGmailUser();
+      const connected = gmailConnected();
+      const account = gmailUser();
 
       if (context.trigger?.commit && context.trigger?.repository && connected) {
-        const recipient = config.to?.trim() || config.sender?.trim() || gmailUser?.email || '';
+        const recipient = config.to?.trim() || config.sender?.trim() || account?.email || '';
         if (recipient) {
           const pushSubject = `[${context.trigger.repository}] New commit ${context.trigger.commit} by ${context.trigger.author}`;
           const pushBody = `New commit change detected on ${context.trigger.repository}\n\nBranch: ${context.trigger.branch || 'main'}\nCommit: ${context.trigger.commit}\nAuthor: ${context.trigger.author}\nMessage: ${context.trigger.message}\nURL: ${context.trigger.htmlUrl || ''}\nTimestamp: ${context.trigger.timestamp || new Date().toISOString()}\n\nDispatched automatically by Kahn Engine workflow.`;
           try {
-            await sendEmail({ to: recipient, subject: pushSubject, body: pushBody });
+            await sendGmail({ to: recipient, subject: pushSubject, body: pushBody });
             log(`Gmail trigger dispatched email to <${recipient}>: "${pushSubject}"`);
           } catch (err) {
             log(`Gmail trigger email dispatch note: ${err.message}`, 'WARN');
@@ -704,7 +1195,7 @@ async function executeSingleNode(node, context, log) {
         };
       }
 
-      log(`Gmail trigger evaluated for event "${event}" (account: ${gmailUser?.email || 'connected'})`);
+      log(`Gmail trigger evaluated for event "${event}" (account: ${account?.email || 'connected'})`);
 
       let latestEmail = null;
       try {
@@ -715,7 +1206,7 @@ async function executeSingleNode(node, context, log) {
         if (config.hasAttachments) queryParts.push('has:attachment');
         const query = queryParts.join(' ') || `label:${label}`;
 
-        const searchResult = await searchEmails({ query, maxResults: 1 });
+        const searchResult = await searchGmail({ query, maxResults: 1 });
         if (searchResult?.messages && searchResult.messages.length > 0) {
           latestEmail = searchResult.messages[0];
           log(`Gmail trigger ingested latest message: "${latestEmail.subject}" from <${latestEmail.from}>`);
@@ -732,7 +1223,7 @@ async function executeSingleNode(node, context, log) {
         messageId: latestEmail?.id || `msg_${Date.now()}`,
         threadId: latestEmail?.threadId || '',
         from: latestEmail?.from || config.sender || 'notifications@service.com',
-        to: latestEmail?.to || gmailUser?.email || '',
+        to: latestEmail?.to || account?.email || '',
         subject: latestEmail?.subject || config.subjectContains || 'New Incoming Email',
         snippet: latestEmail?.snippet || '',
         date: latestEmail?.date || new Date().toISOString(),
@@ -743,8 +1234,8 @@ async function executeSingleNode(node, context, log) {
     case 'gmail':
     case 'gmailaction': {
       const operation = config.operation || 'send_email';
-      const connected = isGmailConnected();
-      const gmailUser = getGmailUser();
+      const connected = gmailConnected();
+      const account = gmailUser();
 
       log(`Gmail node executing (Operation: ${operation}, Connected: ${connected})`);
 
@@ -795,8 +1286,8 @@ async function executeSingleNode(node, context, log) {
                 } else if (context.trigger?.sender) {
                   to = context.trigger.sender;
                   log(`Recipient (to) inferred from upstream trigger: <${to}>`);
-                } else if (gmailUser?.email) {
-                  to = gmailUser.email;
+                } else if (account?.email) {
+                  to = account.email;
                   log(`Recipient (to) default to connected account: <${to}>`);
                 }
               }
@@ -880,6 +1371,17 @@ async function executeSingleNode(node, context, log) {
 
             log(`Resolved email content - To: <${safeTo}>, Subject: "${safeSubject}", Body:\n${safeBody}`);
 
+            if (config.sendNoMatches === false) {
+              const shortlistCount = Number(config.noMatchesCount);
+              if (!Number.isInteger(shortlistCount) || shortlistCount < 0) {
+                throw new Error('No-match email behavior needs an expression resolving to a non-negative shortlist count.');
+              }
+              if (shortlistCount === 0) {
+                log('Gmail digest skipped because no opportunities were shortlisted.');
+                return { sent: false, skipped: true, reason: 'No jobs matched the shortlist criteria.' };
+              }
+            }
+
             if (!connected) {
               log(`Gmail integration (simulated — not connected): message to <${safeTo}> with subject "${safeSubject}"`);
               return {
@@ -895,7 +1397,7 @@ async function executeSingleNode(node, context, log) {
             }
 
             log(`Sending email to <${safeTo}>: "${safeSubject}"`);
-            const result = await sendEmail({ to, subject, body, cc: config.cc, bcc: config.bcc });
+            const result = await sendGmail({ to, subject, body, cc: config.cc, bcc: config.bcc });
             log(`Email sent successfully. Message ID: ${result.messageId}`);
             return { ...result, operation: 'send_email', recipient: to, subject, body };
           }
@@ -925,7 +1427,7 @@ async function executeSingleNode(node, context, log) {
             }
             if (!messageId) throw new Error('Message ID is required to reply.');
             log(`Replying to message ${messageId}`);
-            const result = await replyToEmail({ messageId, body });
+            const result = await replyGmail({ messageId, body });
             log(`Reply sent. New message ID: ${result.messageId}`);
             return { ...result, operation: 'reply_email', body };
           }
@@ -936,7 +1438,7 @@ async function executeSingleNode(node, context, log) {
             if (!connected) {
               return { operation: 'search_emails', query, count: 0, messages: [], simulated: true };
             }
-            const result = await searchEmails({ query, maxResults: 10 });
+            const result = await searchGmail({ query, maxResults: 10 });
             log(`Found ${result.count} matching emails.`);
             return { ...result, operation: 'search_emails', query };
           }
@@ -949,7 +1451,7 @@ async function executeSingleNode(node, context, log) {
               return { operation: 'add_label', messageId, labelName, simulated: true };
             }
             if (!messageId) throw new Error('Message ID is required to add a label.');
-            const result = await addLabel({ messageId, labelName });
+            const result = await labelGmail({ messageId, labelName });
             log(`Label added successfully.`);
             return { ...result, operation: 'add_label' };
           }
@@ -964,7 +1466,7 @@ async function executeSingleNode(node, context, log) {
             if (!connected) {
               return { sent: true, simulated: true, operation, recipient: to, subject, body };
             }
-            const result = await sendEmail({ to, subject, body });
+            const result = await sendGmail({ to, subject, body });
             return { ...result, operation, body };
           }
         }

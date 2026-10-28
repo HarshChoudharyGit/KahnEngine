@@ -6,6 +6,7 @@ import LandingPage from './pages/landing/LandingPage.jsx'
 import DashboardPage from './pages/dashboard/DashboardPage.jsx'
 import WorkflowCanvas from './components/WorkflowCanvas.jsx'
 import { getWorkflow, saveWorkflow, deleteWorkflow } from './services/api.js'
+import { workflowTemplates } from './data/workflowTemplates.js'
 
 function LandingRoute() {
   const navigate = useNavigate()
@@ -137,7 +138,11 @@ function Workspace() {
         onGoDashboard={() => navigate('/dashboard')}
         onGoEditor={() => setActiveTab('editor')}
         onLoadTemplate={(templateId) => {
+          const template = workflowTemplates.find((item) => item.id === templateId)
           setLoadedWorkflow(null)
+          setWorkflowTitle(template?.name || 'My workflow')
+          setIsActive(false)
+          setSaveStatus('unsaved')
           setSelectedTemplate((current) => ({
             id: templateId,
             revision: (current?.revision ?? 0) + 1,

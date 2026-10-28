@@ -661,4 +661,3 @@ export async function upsertIntegrationConnection(provider, accountName, status,
     [provider, accountName || null, status, scopes],
   );
 }
-

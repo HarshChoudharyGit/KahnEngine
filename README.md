@@ -155,13 +155,18 @@ classDiagram
 
 ### 1. 🎨 Visual Flow Builder
 - Interactive drag-and-drop node graph canvas built on `@xyflow/react`.
-- Supports 5 primary operational node types:
+- Supports the following core workflow node types:
   - **Webhook Trigger**: External HTTP POST entrypoints.
-  - **Cron Trigger**: Stores cron syntax and timezone with the workflow; timed dispatch is not implemented.
+  - **Cron Trigger**: Dispatches the downstream workflow on its configured cron schedule and timezone.
   - **HTTP Request**: REST API connector with configurable methods, headers, and payloads.
   - **Transform**: In-memory JavaScript/JSON transformation routines.
   - **Delay**: Configurable pauses and rate dampeners.
+  - **Loop**: Sequential For Each Item or Fixed Iterations control flow with aggregated per-iteration outputs.
 - **Client-Side Cycle Detection**: Prevents cyclical loop edge creation before persisting data to the database.
+
+The Loop node uses two explicit outgoing handles: **BODY** (`sourceHandle: "loop-body"`) and **NEXT** (`sourceHandle: "loop-next"`). Body nodes are all nodes reachable from BODY, excluding nodes reachable from NEXT; those excluded nodes run once after the loop. The graph remains acyclic. Use `{{loop.item}}`, `{{loop.index}}` (zero-based), `{{loop.iteration}}` (one-based), and `{{loop.total}}` inside the body. The default iteration cap is 100 (hard maximum 1000), and a failed iteration stops the workflow while preserving completed iteration outputs with `completed: false`. Successful aggregated outputs are stored on the Loop node as `items`, `results`, `total`, and `completed`.
+
+The template gallery includes **AI Internship & Job Alert Agent**. It imports with an inactive 09:00 Asia/Kolkata cron and sample job data enabled, so the complete flow can be exercised without a jobs API. Replace the sample endpoint/response, configure candidate preferences and the recipient, then connect Gemini and Gmail credentials before activating the schedule. Gmail runs once after the loop; disconnected Gmail execution is simulated rather than delivered.
 
 ### 2. 🧮 Deterministic Execution Engine
 - Dual-pass execution validation powered by **Kahn's Algorithm** (Topological Sort).
@@ -202,7 +207,7 @@ classDiagram
 ### Backend & API
 - **Web Framework**: Fastify (Node.js) for high-throughput, low-overhead HTTP routing
 - **Graph & Math Utilities**: `graphlib` + Custom Kahn's Topological Sorter
-- **Schedules**: Cron trigger definitions and time zones persist in `workflow_schedules`; a background cron dispatcher is not implemented yet
+- **Schedules**: Cron trigger definitions and time zones persist in `workflow_schedules`; the server restores and runs enabled schedules with `node-cron`
 
 ### Distributed Queue & State
 - **Task Queue**: BullMQ/Redis integration is planned but not implemented
@@ -271,9 +276,9 @@ npm run dev --prefix server
 npm run dev --prefix client
 ```
 
-Workflows, execution records, node results, cron schedule definitions, integration status, and encrypted OAuth sessions persist in PostgreSQL. The SSE subscriber registry and GitHub polling cursor remain process-local runtime state. Cron definitions are stored, but this backend does not currently dispatch timed runs. Verify workflow persistence by creating a workflow with `POST /api/v1/workflows`, restarting the server, then retrieving it with `GET /api/v1/workflows/:id`. Live GitHub and Gmail requests still use their external APIs and require their OAuth credentials. BullMQ is not implemented.
+Workflows, execution records, node results, cron schedule definitions, integration status, and encrypted OAuth sessions persist in PostgreSQL. On startup, the server restores enabled cron triggers and runs each workflow in the API process. The scheduler is process-local, so run a single server instance to avoid duplicate cron executions; a distributed scheduler/worker is needed before scaling the API horizontally. The SSE subscriber registry and GitHub polling cursor also remain process-local runtime state. Verify workflow persistence by creating a workflow with `POST /api/v1/workflows`, restarting the server, then retrieving it with `GET /api/v1/workflows/:id`. Live GitHub and Gmail requests still use their external APIs and require their OAuth credentials. BullMQ is not implemented.
 
-Before the canvas dispatches a test run, every node must have a saved configuration and pass node-specific checks. The backend repeats configuration checks along with graph shape and cycle validation; invalid runs return HTTP 400 with per-node `nodeErrors`. This validates configured values, not external service availability or OAuth connectivity. A Cron node's configuration is stored and checked, but it does not schedule automatic runs.
+Before the canvas dispatches a test run, every node must have a saved configuration and pass node-specific checks. The backend repeats configuration checks along with graph shape and cycle validation; invalid runs return HTTP 400 with per-node `nodeErrors`. This validates configured values, not external service availability or OAuth connectivity. Scheduled executions record both the intended cron time and the actual dispatch time in their trigger payload so scheduling lag can be distinguished from downstream node or email-provider latency.
 
 ---
 

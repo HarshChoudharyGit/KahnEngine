@@ -9,6 +9,7 @@ coverage/
 # Production build artifacts
 dist/
 build/
+test-loop.js
 
 # Misc
 .DS_Store

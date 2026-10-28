@@ -130,6 +130,10 @@ export function connectTelemetryStream(executionId, handlers = {}) {
     handlers.onNodeLog?.(safeParse(event));
   });
 
+  eventSource.addEventListener('loop_progress', (event) => {
+    handlers.onLoopProgress?.(safeParse(event));
+  });
+
   eventSource.addEventListener('execution_completed', (event) => {
     handlers.onCompleted?.(safeParse(event));
     eventSource.close();
